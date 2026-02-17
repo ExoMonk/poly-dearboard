@@ -17,8 +17,8 @@ pub struct TraderSummary {
     pub markets_traded: u64,
     pub realized_pnl: String,
     pub total_fees: String,
-    pub first_trade: Option<String>,
-    pub last_trade: Option<String>,
+    pub first_trade: String,
+    pub last_trade: String,
 }
 
 #[derive(Serialize)]
@@ -33,7 +33,7 @@ pub struct TradesResponse {
 pub struct TradeRecord {
     pub tx_hash: String,
     pub block_number: u64,
-    pub block_timestamp: Option<String>,
+    pub block_timestamp: String,
     pub exchange: String,
     pub side: String,
     pub asset_id: String,

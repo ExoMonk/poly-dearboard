@@ -9,6 +9,13 @@ use super::types::*;
 
 const ALLOWED_SORT_COLUMNS: &[&str] = &["realized_pnl", "total_volume", "trade_count"];
 
+/// Exchange contract addresses that appear as maker/taker in OrderFilled events.
+/// These are protocol intermediaries, not real traders.
+const EXCHANGE_CONTRACTS: &[&str] = &[
+    "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E", // CTF Exchange
+    "0xC5d563A36AE78145C45a50134d48A1215220f80a", // NegRisk CTF Exchange
+];
+
 pub async fn leaderboard(
     State(client): State<clickhouse::Client>,
     Query(params): Query<LeaderboardParams>,
@@ -31,19 +38,30 @@ pub async fn leaderboard(
         ));
     }
 
+    // Map API sort names to numeric ClickHouse expressions for proper ordering
+    let sort_expr = match sort {
+        "realized_pnl" => "sumIf(usdc_amount, side = 'sell') - sumIf(usdc_amount, side = 'buy') - sum(fee)",
+        "total_volume" => "sum(usdc_amount)",
+        "trade_count" => "count()",
+        _ => unreachable!(),
+    };
+
+    let exclude = EXCHANGE_CONTRACTS.iter().map(|a| format!("'{a}'")).collect::<Vec<_>>().join(",");
+
     let query = format!(
         "SELECT
-            trader AS address,
+            toString(trader) AS address,
             toString(sum(usdc_amount)) AS total_volume,
             count() AS trade_count,
             uniqExact(asset_id) AS markets_traded,
             toString(sumIf(usdc_amount, side = 'sell') - sumIf(usdc_amount, side = 'buy') - sum(fee)) AS realized_pnl,
             toString(sum(fee)) AS total_fees,
-            toString(min(block_timestamp)) AS first_trade,
-            toString(max(block_timestamp)) AS last_trade
+            ifNull(toString(min(block_timestamp)), '') AS first_trade,
+            ifNull(toString(max(block_timestamp)), '') AS last_trade
         FROM poly_dearboard.trades
+        WHERE trader NOT IN ({exclude})
         GROUP BY trader
-        ORDER BY {sort} {order}
+        ORDER BY {sort_expr} {order}
         LIMIT ? OFFSET ?"
     );
 
@@ -56,7 +74,7 @@ pub async fn leaderboard(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let total: u64 = client
-        .query("SELECT uniqExact(trader) FROM poly_dearboard.trades")
+        .query(&format!("SELECT uniqExact(trader) FROM poly_dearboard.trades WHERE trader NOT IN ({exclude})"))
         .fetch_one()
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -78,16 +96,16 @@ pub async fn trader_stats(
     let result = client
         .query(
             "SELECT
-                trader AS address,
+                toString(trader) AS address,
                 toString(sum(usdc_amount)) AS total_volume,
                 count() AS trade_count,
                 uniqExact(asset_id) AS markets_traded,
                 toString(sumIf(usdc_amount, side = 'sell') - sumIf(usdc_amount, side = 'buy') - sum(fee)) AS realized_pnl,
                 toString(sum(fee)) AS total_fees,
-                min(block_timestamp) AS first_trade,
-                max(block_timestamp) AS last_trade
+                ifNull(toString(min(block_timestamp)), '') AS first_trade,
+                ifNull(toString(max(block_timestamp)), '') AS last_trade
             FROM poly_dearboard.trades
-            WHERE trader = ?
+            WHERE lower(trader) = ?
             GROUP BY trader",
         )
         .bind(&address)
@@ -121,9 +139,9 @@ pub async fn trader_trades(
     let trades = client
         .query(
             "SELECT
-                tx_hash,
+                toString(tx_hash) AS tx_hash,
                 block_number,
-                toString(block_timestamp) AS block_timestamp,
+                ifNull(toString(block_timestamp), '') AS block_timestamp,
                 exchange,
                 side,
                 asset_id,
@@ -132,7 +150,7 @@ pub async fn trader_trades(
                 toString(usdc_amount) AS usdc_amount,
                 toString(fee) AS fee
             FROM poly_dearboard.trades
-            WHERE trader = ?
+            WHERE lower(trader) = ?
               AND (side = ? OR ? = '')
             ORDER BY block_number DESC, log_index DESC
             LIMIT ? OFFSET ?",
@@ -148,7 +166,7 @@ pub async fn trader_trades(
 
     let total: u64 = client
         .query(
-            "SELECT count() FROM poly_dearboard.trades WHERE trader = ? AND (side = ? OR ? = '')",
+            "SELECT count() FROM poly_dearboard.trades WHERE lower(trader) = ? AND (side = ? OR ? = '')",
         )
         .bind(&address)
         .bind(side_filter)
@@ -168,14 +186,17 @@ pub async fn trader_trades(
 pub async fn health(
     State(client): State<clickhouse::Client>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let exclude = EXCHANGE_CONTRACTS.iter().map(|a| format!("'{a}'")).collect::<Vec<_>>().join(",");
+
     let stats = client
-        .query(
+        .query(&format!(
             "SELECT
                 count() AS trade_count,
                 uniqExact(trader) AS trader_count,
                 max(block_number) AS latest_block
-            FROM poly_dearboard.trades",
-        )
+            FROM poly_dearboard.trades
+            WHERE trader NOT IN ({exclude})"
+        ))
         .fetch_one::<HealthStats>()
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
