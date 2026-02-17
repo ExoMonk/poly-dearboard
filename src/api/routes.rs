@@ -9,8 +9,10 @@ use super::types::*;
 
 const ALLOWED_SORT_COLUMNS: &[&str] = &["realized_pnl", "total_volume", "trade_count"];
 
-/// Exchange contract addresses that appear as maker/taker in OrderFilled events.
-/// These are protocol intermediaries, not real traders.
+/// Exchange contracts that appear as `maker` in taker-summary OrderFilled events.
+/// These are protocol intermediaries, not real traders. Safety net filter —
+/// with maker-only MVs the exchange should never appear as trader, but keep
+/// this in case of edge cases or future schema changes.
 const EXCHANGE_CONTRACTS: &[&str] = &[
     "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E", // CTF Exchange
     "0xC5d563A36AE78145C45a50134d48A1215220f80a", // NegRisk CTF Exchange
@@ -40,8 +42,9 @@ pub async fn leaderboard(
     }
 
     // Map API sort names to numeric ClickHouse expressions for proper ordering
+    // Note: fee is 0 in maker-only MVs (fees tracked separately if needed)
     let sort_expr = match sort {
-        "realized_pnl" => "sumIf(usdc_amount, side = 'sell') - sumIf(usdc_amount, side = 'buy') - sum(fee)",
+        "realized_pnl" => "sumIf(usdc_amount, side = 'sell') - sumIf(usdc_amount, side = 'buy')",
         "total_volume" => "sum(usdc_amount)",
         "trade_count" => "count()",
         _ => unreachable!(),
@@ -55,7 +58,7 @@ pub async fn leaderboard(
             toString(sum(usdc_amount)) AS total_volume,
             count() AS trade_count,
             uniqExact(asset_id) AS markets_traded,
-            toString(sumIf(usdc_amount, side = 'sell') - sumIf(usdc_amount, side = 'buy') - sum(fee)) AS realized_pnl,
+            toString(sumIf(usdc_amount, side = 'sell') - sumIf(usdc_amount, side = 'buy')) AS realized_pnl,
             toString(sum(fee)) AS total_fees,
             ifNull(toString(min(block_timestamp)), '') AS first_trade,
             ifNull(toString(max(block_timestamp)), '') AS last_trade
@@ -101,7 +104,7 @@ pub async fn trader_stats(
                 toString(sum(usdc_amount)) AS total_volume,
                 count() AS trade_count,
                 uniqExact(asset_id) AS markets_traded,
-                toString(sumIf(usdc_amount, side = 'sell') - sumIf(usdc_amount, side = 'buy') - sum(fee)) AS realized_pnl,
+                toString(sumIf(usdc_amount, side = 'sell') - sumIf(usdc_amount, side = 'buy')) AS realized_pnl,
                 toString(sum(fee)) AS total_fees,
                 ifNull(toString(min(block_timestamp)), '') AS first_trade,
                 ifNull(toString(max(block_timestamp)), '') AS last_trade
