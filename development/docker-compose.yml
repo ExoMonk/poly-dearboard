@@ -22,7 +22,7 @@ services:
     image: ghcr.io/erpc/erpc:latest
     platform: linux/amd64
     volumes:
-      - ../indexer/erpc.yaml:/root/erpc.yaml
+      - ../indexer/erpc_conf.yaml:/root/erpc_conf.yaml
     ports:
       - "4000:4000"    # eRPC proxy
       - "4001:4001"    # eRPC admin/metrics

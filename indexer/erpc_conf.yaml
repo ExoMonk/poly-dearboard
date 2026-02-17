@@ -8,5 +8,4 @@ projects:
       #   - endpoint: https://polygon-mainnet.quiknode.pro/YOUR_KEY
       - endpoint: https://polygon-rpc.com
       - endpoint: https://polygon.drpc.org
-      - endpoint: https://rpc-mainnet.matic.quiknode.pro
-      - endpoint: https://broken-empty-meadow.matic.quiknode.pro/80336afff64756adf495a0233910456592d3486e
+      - endpoint: https://polygon.api.onfinality.io/public
