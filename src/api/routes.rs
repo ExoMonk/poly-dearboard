@@ -14,6 +14,7 @@ const ALLOWED_SORT_COLUMNS: &[&str] = &["realized_pnl", "total_volume", "trade_c
 const EXCHANGE_CONTRACTS: &[&str] = &[
     "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E", // CTF Exchange
     "0xC5d563A36AE78145C45a50134d48A1215220f80a", // NegRisk CTF Exchange
+    "0x02A86f51aA7B8b1c17c30364748d5Ae4a0727E23", // Polymarket Relayer
 ];
 
 pub async fn leaderboard(

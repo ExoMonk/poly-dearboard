@@ -18,18 +18,33 @@ services:
       interval: 5s
       retries: 5
 
+  erpc:
+    image: ghcr.io/erpc/erpc:latest
+    platform: linux/amd64
+    volumes:
+      - ../indexer/erpc.yaml:/root/erpc.yaml
+    ports:
+      - "4000:4000"    # eRPC proxy
+      - "4001:4001"    # eRPC admin/metrics
+    healthcheck:
+      test: ["CMD", "curl", "http://localhost:4000"]
+      interval: 5s
+      retries: 5
+      start_period: 10s
+
   indexer:
     image: ghcr.io/joshstevens19/rindexer:latest
     platform: linux/amd64
     depends_on:
       clickhouse:
         condition: service_healthy
+      erpc:
+        condition: service_started
     environment:
       CLICKHOUSE_URL: http://clickhouse:8123
       CLICKHOUSE_USER: default
       CLICKHOUSE_PASSWORD: ""
       CLICKHOUSE_DB: poly_dearboard
-      POLYGON_RPC_URL: ${POLYGON_RPC_URL:-https://polygon-rpc.com}
     ports:
       - "8080:8080"    # rindexer health + metrics
     volumes:

@@ -6,9 +6,9 @@ timestamps: true
 networks:
   - name: polygon
     chain_id: 137
-    rpc: ${POLYGON_RPC_URL}
-    compute_units_per_second: 30
-    max_block_range: 2000
+    rpc: http://erpc:4000/main/evm/137
+    compute_units_per_second: 660
+    max_block_range: 10000
     block_poll_frequency: "/3"
 
 storage:
