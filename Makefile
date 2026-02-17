@@ -1,4 +1,4 @@
-.PHONY: indexer live serve query clean
+.PHONY: indexer live serve query frontend clean
 
 COMPOSE := docker compose -f development/docker-compose.yml
 
@@ -13,6 +13,9 @@ serve: ## Start API server on port 3001
 
 query: ## Run E2E leaderboard queries against the API
 	@./scripts/queries.sh
+
+frontend: ## Start frontend dev server on port 5173
+	cd frontend && npm run dev
 
 clean: ## Tear down Docker containers + volumes
 	$(COMPOSE) down -v
