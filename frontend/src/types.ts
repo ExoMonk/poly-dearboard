@@ -96,5 +96,23 @@ export interface OpenPosition {
 }
 
 export interface PositionsResponse {
-  positions: OpenPosition[];
+  open: OpenPosition[];
+  closed: OpenPosition[];
+}
+
+export interface PnlChartPoint {
+  date: string;
+  pnl: string;
+}
+
+export interface PnlChartResponse {
+  points: PnlChartPoint[];
+}
+
+export interface ResolvedMarket {
+  question: string;
+  outcome: string;
+  category: string;
+  active: boolean;
+  gamma_token_id: string;
 }

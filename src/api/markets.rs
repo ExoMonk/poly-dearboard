@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -10,6 +10,8 @@ pub struct MarketInfo {
     pub outcome: String,
     pub category: String,
     pub active: bool,
+    /// Full-precision token ID from Gamma API (for lookups that need the exact uint256)
+    pub gamma_token_id: String,
 }
 
 /// Cache keyed by the first 15 significant digits of the token ID.
@@ -19,6 +21,34 @@ pub type MarketCache = Arc<RwLock<HashMap<String, MarketInfo>>>;
 
 pub fn new_cache() -> MarketCache {
     Arc::new(RwLock::new(HashMap::new()))
+}
+
+/// Convert any token ID to ClickHouse's stored format (f64 scientific notation).
+/// "43662442989674113827..." → "4.366244298967411e75"  (full-precision → scientific)
+/// "4.366244298967411e75"   → "4.366244298967411e75"  (already scientific, no-op)
+/// "0"                      → "0"                      (small values unchanged)
+pub fn to_clickhouse_id(id: &str) -> String {
+    if let Ok(f) = id.parse::<f64>() {
+        if f > 1e15 && f.is_finite() {
+            return format!("{:e}", f);
+        }
+    }
+    id.to_string()
+}
+
+/// Convert any token ID to an integer string (no scientific notation).
+/// "4.366244298967411e75" → "43662442989674110000..." (lossy but usable for display/API)
+/// "51797304566750985981..." → "51797304566750985981..." (already integer, no-op)
+/// Used as fallback when gamma_token_id is unavailable.
+pub fn to_integer_id(id: &str) -> String {
+    if id.contains('e') || id.contains('E') {
+        if let Ok(f) = id.parse::<f64>() {
+            if f.is_finite() {
+                return format!("{:.0}", f);
+            }
+        }
+    }
+    id.to_string()
 }
 
 /// Extract the significant digits from a token ID string.
@@ -43,13 +73,36 @@ fn cache_key(token_id: &str) -> String {
     }
 }
 
-/// Pre-warm the cache by batch-fetching events from the Gamma API.
-/// Uses the events endpoint (not markets) because it includes `tags`
-/// for category — the market-level `category` field is empty on modern markets.
-pub async fn warm_cache(http: &reqwest::Client, cache: &MarketCache) {
+/// Pre-warm the cache by fetching Gamma events targeted to tokens in ClickHouse.
+/// Queries ClickHouse for all distinct asset_ids, then paginates Gamma events
+/// until every ClickHouse token has a full-precision match (or pagination exhausted).
+pub async fn warm_cache(http: &reqwest::Client, db: &clickhouse::Client, cache: &MarketCache) {
+    // 1. Get all distinct token prefixes from ClickHouse
+    let target_prefixes: HashSet<String> = match db
+        .query("SELECT DISTINCT asset_id FROM poly_dearboard.trades")
+        .fetch_all::<AssetIdRow>()
+        .await
+    {
+        Ok(rows) => rows.iter().map(|r| cache_key(&r.asset_id)).collect(),
+        Err(e) => {
+            tracing::warn!("Failed to query ClickHouse for asset_ids: {e}");
+            return;
+        }
+    };
+
+    if target_prefixes.is_empty() {
+        tracing::info!("No tokens in ClickHouse, skipping warm cache");
+        return;
+    }
+
+    let target_count = target_prefixes.len();
+    tracing::info!("Warming cache for {target_count} distinct ClickHouse tokens...");
+
+    // 2. Paginate Gamma events, caching only tokens that match ClickHouse prefixes
+    let mut covered: HashSet<String> = HashSet::new();
     let mut offset = 0u32;
-    let batch = 100u32; // events endpoint returns nested markets, so smaller batches
-    let mut total_markets = 0u32;
+    let batch = 100u32;
+    let max_offset = 100_000u32;
 
     loop {
         let url = format!(
@@ -72,7 +125,7 @@ pub async fn warm_cache(http: &reqwest::Client, cache: &MarketCache) {
         let events: Vec<GammaEvent> = match resp.json().await {
             Ok(e) => e,
             Err(e) => {
-                tracing::warn!("Market cache parse failed: {e}");
+                tracing::warn!("Market cache parse failed at offset {offset}: {e}");
                 break;
             }
         };
@@ -88,33 +141,56 @@ pub async fn warm_cache(http: &reqwest::Client, cache: &MarketCache) {
                     let outcomes = market.parsed_outcomes();
                     let active = market.is_active();
                     for (i, id) in ids.iter().enumerate() {
-                        let outcome = outcomes.get(i).cloned().unwrap_or_default();
-                        c.insert(
-                            cache_key(id),
-                            MarketInfo {
-                                question: market.question.clone().unwrap_or_default(),
-                                outcome,
-                                category: category.clone(),
-                                active,
-                            },
-                        );
-                        total_markets += 1;
+                        let key = cache_key(id);
+                        if target_prefixes.contains(&key) {
+                            let outcome = outcomes.get(i).cloned().unwrap_or_default();
+                            c.insert(
+                                key.clone(),
+                                MarketInfo {
+                                    question: market.question.clone().unwrap_or_default(),
+                                    outcome,
+                                    category: category.clone(),
+                                    active,
+                                    gamma_token_id: id.clone(),
+                                },
+                            );
+                            covered.insert(key);
+                        }
                     }
                 }
             }
         }
 
+        if covered.len() >= target_count {
+            break;
+        }
         if count < batch as usize {
             break;
         }
         offset += batch;
-
-        if total_markets >= 50000 {
+        if offset >= max_offset {
             break;
+        }
+
+        if offset % 5000 == 0 {
+            tracing::info!(
+                "Warm cache progress: {}/{} tokens covered ({offset} events scanned)",
+                covered.len(),
+                target_count
+            );
         }
     }
 
-    tracing::info!("Warmed market cache with {total_markets} token entries");
+    tracing::info!(
+        "Warmed market cache: {}/{} ClickHouse tokens covered ({offset} events scanned)",
+        covered.len(),
+        target_count
+    );
+}
+
+#[derive(clickhouse::Row, serde::Deserialize)]
+struct AssetIdRow {
+    asset_id: String,
 }
 
 /// Resolve token IDs to market info.
@@ -136,9 +212,7 @@ pub async fn resolve_markets(
             let key = cache_key(id);
             if let Some(info) = c.get(&key) {
                 result.insert(id.clone(), info.clone());
-            } else if !id.contains('e') && !id.contains('E') {
-                // Only try individual API calls for full-precision decimal IDs
-                // (scientific notation IDs would fail anyway — precision is lost)
+            } else {
                 uncached.push(id.clone());
             }
         }
@@ -148,17 +222,17 @@ pub async fn resolve_markets(
         return result;
     }
 
-    // Resolve uncached full-precision IDs via Gamma API
+    // Resolve uncached full-precision IDs via Gamma API (max 10 concurrent)
     let sem = Arc::new(tokio::sync::Semaphore::new(10));
     let mut handles = Vec::new();
 
     for id in &uncached {
         let http = http.clone();
         let id = id.clone();
-        let sem = sem.clone();
+        let permit = Arc::clone(&sem).acquire_owned().await.unwrap();
 
         handles.push(tokio::spawn(async move {
-            let _permit = sem.acquire().await.ok()?;
+            let _permit = permit;
             fetch_market_info(&http, &id).await
         }));
     }
@@ -182,9 +256,13 @@ pub async fn resolve_markets(
 }
 
 async fn fetch_market_info(http: &reqwest::Client, token_id: &str) -> Option<MarketInfo> {
+    // Gamma API requires integer token IDs — never scientific notation.
+    // Convert scientific notation to integer form (lossy but the API needs a plain number).
+    let lookup_id = to_integer_id(token_id);
+
     let url = format!(
         "https://gamma-api.polymarket.com/markets?clob_token_ids={}",
-        token_id
+        lookup_id
     );
 
     let resp = http
@@ -199,11 +277,18 @@ async fn fetch_market_info(http: &reqwest::Client, token_id: &str) -> Option<Mar
 
     let ids = market.parsed_token_ids();
     let outcomes = market.parsed_outcomes();
+    // Match by prefix since the lookup_id may be lossy
     let outcome = ids
         .iter()
-        .position(|id| id == token_id)
+        .position(|id| id == &lookup_id || cache_key(id) == cache_key(token_id))
         .and_then(|idx| outcomes.get(idx).cloned())
         .unwrap_or_default();
+
+    let gamma_token_id = ids
+        .iter()
+        .find(|id| cache_key(id) == cache_key(token_id))
+        .cloned()
+        .unwrap_or_else(|| lookup_id);
 
     let active = market.is_active();
     Some(MarketInfo {
@@ -211,6 +296,7 @@ async fn fetch_market_info(http: &reqwest::Client, token_id: &str) -> Option<Mar
         outcome,
         category: String::new(),
         active,
+        gamma_token_id,
     })
 }
 

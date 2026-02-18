@@ -6,6 +6,8 @@ import type {
   HotMarketsResponse,
   LiveFeedResponse,
   PositionsResponse,
+  PnlChartResponse,
+  ResolvedMarket,
   SortColumn,
   SortOrder,
   Timeframe,
@@ -83,5 +85,20 @@ export async function fetchRecentTrades(params?: {
 export async function fetchTraderPositions(address: string): Promise<PositionsResponse> {
   const res = await fetch(`${BASE}/trader/${address}/positions`);
   if (!res.ok) throw new Error(`Positions fetch failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchPnlChart(address: string): Promise<PnlChartResponse> {
+  const res = await fetch(`${BASE}/trader/${address}/pnl-chart`);
+  if (!res.ok) throw new Error(`PnL chart fetch failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchMarketResolve(
+  tokenIds: string,
+): Promise<Record<string, ResolvedMarket>> {
+  const sp = new URLSearchParams({ token_ids: tokenIds });
+  const res = await fetch(`${BASE}/market/resolve?${sp}`);
+  if (!res.ok) throw new Error(`Market resolve failed: ${res.status}`);
   return res.json();
 }

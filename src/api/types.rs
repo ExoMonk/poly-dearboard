@@ -181,5 +181,42 @@ pub struct OpenPosition {
 
 #[derive(Serialize)]
 pub struct PositionsResponse {
-    pub positions: Vec<OpenPosition>,
+    pub open: Vec<OpenPosition>,
+    pub closed: Vec<OpenPosition>,
+}
+
+// -- PnL Chart --
+
+#[derive(Row, Deserialize)]
+pub struct PnlChartRow {
+    pub date: String,
+    pub pnl: String,
+}
+
+#[derive(Serialize)]
+pub struct PnlChartPoint {
+    pub date: String,
+    pub pnl: String,
+}
+
+#[derive(Serialize)]
+pub struct PnlChartResponse {
+    pub points: Vec<PnlChartPoint>,
+}
+
+// -- On-demand market resolve --
+
+#[derive(Deserialize)]
+pub struct ResolveParams {
+    pub token_ids: String,
+}
+
+#[derive(Clone, Serialize)]
+pub struct ResolvedMarket {
+    pub question: String,
+    pub outcome: String,
+    pub category: String,
+    pub active: bool,
+    /// Full-precision token ID from Gamma API (for display/linking)
+    pub gamma_token_id: String,
 }

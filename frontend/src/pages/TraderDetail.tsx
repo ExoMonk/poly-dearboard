@@ -1,18 +1,21 @@
 import { useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
-import { fetchTrader, fetchTraderTrades, fetchTraderPositions } from "../api";
+import { fetchTrader, fetchTraderTrades, fetchTraderPositions, fetchPnlChart } from "../api";
+import type { OpenPosition } from "../types";
 import Spinner from "../components/Spinner";
 import Pagination from "../components/Pagination";
-import TradeActivity from "../charts/TradeActivity";
+import PnlChart from "../charts/PnlChart";
 import { formatUsd, formatNumber, formatDate, formatTimestamp, shortenAddress, polygonscanAddress, polygonscanTx, polymarketAddress } from "../lib/format";
 
 const PAGE_SIZE = 50;
+type PosTab = "open" | "closed";
 
 export default function TraderDetail() {
   const { address } = useParams<{ address: string }>();
   const [sideFilter, setSideFilter] = useState("");
   const [offset, setOffset] = useState(0);
+  const [posTab, setPosTab] = useState<PosTab>("open");
 
   const { data: trader, isLoading: loadingTrader, error: traderError } = useQuery({
     queryKey: ["trader", address],
@@ -30,6 +33,12 @@ export default function TraderDetail() {
   const { data: positionsData } = useQuery({
     queryKey: ["positions", address],
     queryFn: () => fetchTraderPositions(address!),
+    enabled: !!address,
+  });
+
+  const { data: pnlChart } = useQuery({
+    queryKey: ["pnlChart", address],
+    queryFn: () => fetchPnlChart(address!),
     enabled: !!address,
   });
 
@@ -86,80 +95,34 @@ export default function TraderDetail() {
         <StatCard label="Active Since" value={formatDate(trader.first_trade)} />
       </div>
 
-      {/* Trade Activity Chart */}
-      {tradesData && tradesData.trades.length > 0 && <TradeActivity trades={tradesData.trades} />}
+      {/* Cumulative PnL Chart */}
+      {pnlChart && pnlChart.points.length > 0 && <PnlChart points={pnlChart.points} />}
 
-      {/* Open Positions */}
-      {positionsData && positionsData.positions.length > 0 && (
+      {/* Positions */}
+      {positionsData && (positionsData.open.length > 0 || positionsData.closed.length > 0) && (
         <div>
-          <h2 className="text-lg font-bold gradient-text mb-4">Positions</h2>
-          <div className="glass overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-[var(--border-glow)] text-[var(--text-secondary)] text-xs uppercase tracking-widest">
-                    <th className="px-4 py-3 text-left">Market</th>
-                    <th className="px-4 py-3 text-center">Outcome</th>
-                    <th className="px-4 py-3 text-center">Side</th>
-                    <th className="px-4 py-3 text-right">Tokens</th>
-                    <th className="px-4 py-3 text-right">Avg Cost</th>
-                    <th className="px-4 py-3 text-right">Price</th>
-                    <th className="px-4 py-3 text-right">PnL</th>
-                    <th className="px-4 py-3 text-right">Volume</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {positionsData.positions.map((p) => {
-                    const positionPnl = parseFloat(p.pnl);
-                    return (
-                      <tr key={p.asset_id} className="border-b border-[var(--border-subtle)] row-glow">
-                        <td className="px-4 py-3 text-[var(--text-primary)] max-w-xs truncate" title={p.question}>
-                          {p.question}
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          {p.outcome && (
-                            <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
-                              p.outcome.toLowerCase() === "yes"
-                                ? "bg-[var(--neon-green)]/10 text-[var(--neon-green)]"
-                                : "bg-[var(--neon-red)]/10 text-[var(--neon-red)]"
-                            }`}>
-                              {p.outcome}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
-                            p.side === "long"
-                              ? "bg-[var(--neon-green)]/10 text-[var(--neon-green)] shadow-[0_0_6px_rgba(0,255,136,0.15)]"
-                              : p.side === "short"
-                              ? "bg-[var(--neon-red)]/10 text-[var(--neon-red)] shadow-[0_0_6px_rgba(255,51,102,0.15)]"
-                              : "bg-[var(--text-secondary)]/10 text-[var(--text-secondary)]"
-                          }`}>
-                            {p.side.toUpperCase()}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-right font-mono text-[var(--text-primary)]">
-                          {formatNumber(Math.abs(parseFloat(p.net_tokens)))}
-                        </td>
-                        <td className="px-4 py-3 text-right font-mono text-[var(--text-secondary)]">
-                          {formatUsd(p.cost_basis)}
-                        </td>
-                        <td className="px-4 py-3 text-right font-mono text-[var(--text-primary)]">
-                          {formatUsd(p.latest_price)}
-                        </td>
-                        <td className={`px-4 py-3 text-right font-mono ${positionPnl >= 0 ? "glow-green" : "glow-red"}`}>
-                          {formatUsd(p.pnl)}
-                        </td>
-                        <td className="px-4 py-3 text-right font-mono text-[var(--text-secondary)]">
-                          {formatUsd(p.volume)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+          <div className="flex items-center gap-4 mb-4">
+            <h2 className="text-lg font-bold gradient-text">Positions</h2>
+            <div className="flex gap-1">
+              {([
+                { value: "open" as PosTab, label: "Open", count: positionsData.open.length },
+                { value: "closed" as PosTab, label: "Closed", count: positionsData.closed.length },
+              ]).map((tab) => (
+                <button
+                  key={tab.value}
+                  onClick={() => setPosTab(tab.value)}
+                  className={`px-4 py-1.5 text-xs rounded-full font-medium transition-all duration-200 ${
+                    posTab === tab.value
+                      ? "bg-[var(--accent-cyan)]/10 text-[var(--accent-cyan)] border border-[var(--accent-cyan)]/30 shadow-[0_0_8px_rgba(34,211,238,0.15)]"
+                      : "text-[var(--text-secondary)] border border-transparent hover:text-[var(--text-primary)] hover:border-[var(--border-glow)]"
+                  }`}
+                >
+                  {tab.label} ({tab.count})
+                </button>
+              ))}
             </div>
           </div>
+          <PositionsTable positions={posTab === "open" ? positionsData.open : positionsData.closed} />
         </div>
       )}
 
@@ -242,6 +205,81 @@ export default function TraderDetail() {
         ) : (
           <p className="text-[var(--text-secondary)] text-center py-8">No trades found</p>
         )}
+      </div>
+    </div>
+  );
+}
+
+function PositionsTable({ positions }: { positions: OpenPosition[] }) {
+  if (positions.length === 0) {
+    return <p className="text-[var(--text-secondary)] text-center py-8">No positions</p>;
+  }
+  return (
+    <div className="glass overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-[var(--border-glow)] text-[var(--text-secondary)] text-xs uppercase tracking-widest">
+              <th className="px-4 py-3 text-left">Market</th>
+              <th className="px-4 py-3 text-center">Outcome</th>
+              <th className="px-4 py-3 text-center">Side</th>
+              <th className="px-4 py-3 text-right">Tokens</th>
+              <th className="px-4 py-3 text-right">Avg Cost</th>
+              <th className="px-4 py-3 text-right">Price</th>
+              <th className="px-4 py-3 text-right">PnL</th>
+              <th className="px-4 py-3 text-right">Volume</th>
+            </tr>
+          </thead>
+          <tbody>
+            {positions.map((p) => {
+              const positionPnl = parseFloat(p.pnl);
+              return (
+                <tr key={p.asset_id} className="border-b border-[var(--border-subtle)] row-glow">
+                  <td className="px-4 py-3 text-[var(--text-primary)] max-w-xs truncate" title={p.question}>
+                    {p.question}
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    {p.outcome && (
+                      <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
+                        p.outcome.toLowerCase() === "yes"
+                          ? "bg-[var(--neon-green)]/10 text-[var(--neon-green)]"
+                          : "bg-[var(--neon-red)]/10 text-[var(--neon-red)]"
+                      }`}>
+                        {p.outcome}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
+                      p.side === "long"
+                        ? "bg-[var(--neon-green)]/10 text-[var(--neon-green)] shadow-[0_0_6px_rgba(0,255,136,0.15)]"
+                        : p.side === "short"
+                        ? "bg-[var(--neon-red)]/10 text-[var(--neon-red)] shadow-[0_0_6px_rgba(255,51,102,0.15)]"
+                        : "bg-[var(--text-secondary)]/10 text-[var(--text-secondary)]"
+                    }`}>
+                      {p.side.toUpperCase()}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-right font-mono text-[var(--text-primary)]">
+                    {formatNumber(Math.abs(parseFloat(p.net_tokens)))}
+                  </td>
+                  <td className="px-4 py-3 text-right font-mono text-[var(--text-secondary)]">
+                    {formatUsd(p.cost_basis)}
+                  </td>
+                  <td className="px-4 py-3 text-right font-mono text-[var(--text-primary)]">
+                    {formatUsd(p.latest_price)}
+                  </td>
+                  <td className={`px-4 py-3 text-right font-mono ${positionPnl >= 0 ? "glow-green" : "glow-red"}`}>
+                    {formatUsd(p.pnl)}
+                  </td>
+                  <td className="px-4 py-3 text-right font-mono text-[var(--text-secondary)]">
+                    {formatUsd(p.volume)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );

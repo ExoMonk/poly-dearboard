@@ -1,10 +1,11 @@
 import type { ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { fetchHealth } from "../api";
 import { formatNumber } from "../lib/format";
 
 export default function Layout({ children }: { children: ReactNode }) {
+  const { pathname } = useLocation();
   const { data: health } = useQuery({
     queryKey: ["health"],
     queryFn: fetchHealth,
@@ -25,10 +26,10 @@ export default function Layout({ children }: { children: ReactNode }) {
             </span>
           </Link>
           <nav className="flex items-center gap-6 text-sm">
-            <Link to="/" className="text-[var(--text-secondary)] hover:text-[var(--accent-cyan)] transition-colors duration-200">
+            <Link to="/" className={`transition-colors duration-200 ${pathname === "/" ? "text-[var(--accent-cyan)] font-semibold" : "text-[var(--text-secondary)] hover:text-[var(--accent-cyan)]"}`}>
               Leaderboard
             </Link>
-            <Link to="/activity" className="text-[var(--text-secondary)] hover:text-[var(--accent-cyan)] transition-colors duration-200">
+            <Link to="/activity" className={`transition-colors duration-200 ${pathname === "/activity" ? "text-[var(--accent-cyan)] font-semibold" : "text-[var(--text-secondary)] hover:text-[var(--accent-cyan)]"}`}>
               Activity
             </Link>
           </nav>

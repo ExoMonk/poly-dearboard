@@ -81,8 +81,8 @@ pub async fn leaderboard(
                        sum(usdc_amount) AS volume,
                        count() AS trades,
                        sum(fee) AS fees,
-                       min(block_timestamp) AS first_ts,
-                       max(block_timestamp) AS last_ts
+                       min(if(block_timestamp = toDateTime('1970-01-01 00:00:00'), NULL, block_timestamp)) AS first_ts,
+                       max(if(block_timestamp = toDateTime('1970-01-01 00:00:00'), NULL, block_timestamp)) AS last_ts
                 FROM poly_dearboard.trades
                 WHERE trader NOT IN ({exclude}) {time_filter}
                 GROUP BY trader, asset_id
@@ -152,8 +152,8 @@ pub async fn trader_stats(
                            sum(usdc_amount) AS volume,
                            count() AS trades,
                            sum(fee) AS fees,
-                           min(block_timestamp) AS first_ts,
-                           max(block_timestamp) AS last_ts
+                           min(if(block_timestamp = toDateTime('1970-01-01 00:00:00'), NULL, block_timestamp)) AS first_ts,
+                           max(if(block_timestamp = toDateTime('1970-01-01 00:00:00'), NULL, block_timestamp)) AS last_ts
                     FROM poly_dearboard.trades
                     WHERE lower(trader) = ?
                     GROUP BY trader, asset_id
@@ -199,7 +199,7 @@ pub async fn trader_trades(
         ));
     }
 
-    let trades = state
+    let mut trades = state
         .db
         .query(
             "SELECT
@@ -227,6 +227,19 @@ pub async fn trader_trades(
         .fetch_all::<TradeRecord>()
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Replace ClickHouse asset_ids with full-precision Gamma token IDs (or integer fallback)
+    {
+        let token_ids: Vec<String> = trades.iter().map(|t| t.asset_id.clone()).collect();
+        let market_info =
+            markets::resolve_markets(&state.http, &state.market_cache, &token_ids).await;
+        for trade in &mut trades {
+            trade.asset_id = market_info
+                .get(&trade.asset_id)
+                .map(|i| i.gamma_token_id.clone())
+                .unwrap_or_else(|| markets::to_integer_id(&trade.asset_id));
+        }
+    }
 
     let total: u64 = state
         .db
@@ -301,30 +314,33 @@ pub async fn hot_markets(
         let question = info
             .map(|i| i.question.clone())
             .unwrap_or_else(|| shorten_id(&r.asset_id));
+        // Prefer full-precision Gamma token ID; fall back to integer form (never scientific notation)
+        let display_id = info
+            .map(|i| i.gamma_token_id.clone())
+            .unwrap_or_else(|| markets::to_integer_id(&r.asset_id));
         let vol: f64 = r.volume.parse().unwrap_or(0.0);
 
         if let Some(existing) = merged.get_mut(&question) {
             // Merge into existing event
             let existing_vol: f64 = existing.volume.parse().unwrap_or(0.0);
-            existing.volume = format!("{}", existing_vol + vol);
+            existing.volume = format!("{:.6}", existing_vol + vol);
             existing.trade_count += r.trade_count;
             existing.unique_traders += r.unique_traders;
-            existing.all_token_ids.push(r.asset_id.clone());
+            existing.all_token_ids.push(display_id.clone());
             if r.last_trade > existing.last_trade {
                 existing.last_trade = r.last_trade;
                 existing.last_price = r.last_price;
             }
             // Keep the higher-volume token as the representative token_id
             if vol > existing_vol {
-                existing.token_id = r.asset_id;
+                existing.token_id = display_id;
             }
         } else {
-            let asset_id = r.asset_id.clone();
             merged.insert(
                 question.clone(),
                 HotMarket {
-                    token_id: r.asset_id,
-                    all_token_ids: vec![asset_id],
+                    token_id: display_id.clone(),
+                    all_token_ids: vec![display_id],
                     question,
                     outcome: String::new(),
                     category: info.map(|i| i.category.clone()).unwrap_or_default(),
@@ -367,6 +383,26 @@ pub async fn recent_trades(
                 .collect()
         })
         .unwrap_or_default();
+
+    // Validate token IDs to prevent SQL injection (must be numeric, possibly scientific notation)
+    for id in &token_ids {
+        if !id
+            .chars()
+            .all(|c| c.is_ascii_digit() || matches!(c, '.' | 'e' | 'E' | '+' | '-'))
+        {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "Invalid token_id format".to_string(),
+            ));
+        }
+    }
+
+    // Convert any format (full-precision integers, scientific notation) to
+    // ClickHouse's stored format (f64 scientific notation) for exact matching.
+    let token_ids: Vec<String> = token_ids
+        .iter()
+        .map(|id| markets::to_clickhouse_id(id))
+        .collect();
 
     let query = if token_ids.is_empty() {
         format!(
@@ -439,7 +475,9 @@ pub async fn recent_trades(
                 block_timestamp: r.block_timestamp,
                 trader: r.trader,
                 side: r.side,
-                asset_id: r.asset_id,
+                asset_id: info
+                    .map(|i| i.gamma_token_id.clone())
+                    .unwrap_or_else(|| markets::to_integer_id(&r.asset_id)),
                 amount: r.amount,
                 price: r.price,
                 usdc_amount: r.usdc_amount,
@@ -528,36 +566,129 @@ pub async fn trader_positions(
     let market_info =
         markets::resolve_markets(&state.http, &state.market_cache, &token_ids).await;
 
-    let positions = rows
+    let mut open = Vec::new();
+    let mut closed = Vec::new();
+
+    for r in rows {
+        let api_resolved = market_info
+            .get(&r.asset_id)
+            .map(|i| !i.active)
+            .unwrap_or(false);
+        // Price-based fallback: within half a cent of 0 or 1 means settled
+        let price_settled = r
+            .latest_price
+            .parse::<f64>()
+            .map(|p| p < 0.005 || p > 0.995)
+            .unwrap_or(false);
+        // Trader fully exited (bought then sold everything)
+        let user_exited = r.side_summary == "closed";
+        let settled = api_resolved || price_settled || user_exited;
+
+        let info = market_info.get(&r.asset_id);
+        let pos = OpenPosition {
+            question: info
+                .map(|i| i.question.clone())
+                .unwrap_or_else(|| shorten_id(&r.asset_id)),
+            outcome: info.map(|i| i.outcome.clone()).unwrap_or_default(),
+            asset_id: info
+                .map(|i| i.gamma_token_id.clone())
+                .unwrap_or_else(|| markets::to_integer_id(&r.asset_id)),
+            side: r.side_summary,
+            net_tokens: r.net_tokens,
+            cost_basis: r.cost_basis,
+            latest_price: r.latest_price,
+            pnl: r.pnl,
+            volume: r.volume,
+            trade_count: r.trade_count,
+        };
+
+        if settled {
+            closed.push(pos);
+        } else {
+            open.push(pos);
+        }
+    }
+
+    Ok(Json(PositionsResponse { open, closed }))
+}
+
+pub async fn pnl_chart(
+    State(state): State<AppState>,
+    Path(address): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let address = address.to_lowercase();
+
+    // Daily cash flow: sells - buys. Running sum computed in Rust to avoid
+    // clickhouse crate issues with window functions in binary protocol.
+    let rows = state
+        .db
+        .query(
+            "SELECT
+                ifNull(toString(toDate(block_timestamp)), '') AS date,
+                toString(ROUND(sum(if(side = 'sell', toFloat64(usdc_amount), -toFloat64(usdc_amount))), 2)) AS pnl
+            FROM poly_dearboard.trades
+            WHERE lower(trader) = ?
+              AND block_timestamp > toDateTime('1970-01-01 00:00:00')
+            GROUP BY toDate(block_timestamp)
+            ORDER BY toDate(block_timestamp)",
+        )
+        .bind(&address)
+        .fetch_all::<PnlChartRow>()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Cumulative sum
+    let mut cumulative = 0.0;
+    let points = rows
         .into_iter()
-        .filter(|r| {
-            // Filter out resolved markets — if we have market info and it's inactive,
-            // the market has resolved and tokens were likely redeemed.
-            market_info
-                .get(&r.asset_id)
-                .map(|i| i.active)
-                .unwrap_or(true) // keep if we can't determine status
-        })
         .map(|r| {
-            let info = market_info.get(&r.asset_id);
-            OpenPosition {
-                question: info
-                    .map(|i| i.question.clone())
-                    .unwrap_or_else(|| shorten_id(&r.asset_id)),
-                outcome: info.map(|i| i.outcome.clone()).unwrap_or_default(),
-                asset_id: r.asset_id,
-                side: r.side_summary,
-                net_tokens: r.net_tokens,
-                cost_basis: r.cost_basis,
-                latest_price: r.latest_price,
-                pnl: r.pnl,
-                volume: r.volume,
-                trade_count: r.trade_count,
+            cumulative += r.pnl.parse::<f64>().unwrap_or(0.0);
+            PnlChartPoint {
+                date: r.date,
+                pnl: format!("{:.2}", cumulative),
             }
         })
         .collect();
 
-    Ok(Json(PositionsResponse { positions }))
+    Ok(Json(PnlChartResponse { points }))
+}
+
+pub async fn resolve_market(
+    State(state): State<AppState>,
+    Query(params): Query<ResolveParams>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let token_ids: Vec<String> = params
+        .token_ids
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if token_ids.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "token_ids required".to_string()));
+    }
+
+    let info = markets::resolve_markets(&state.http, &state.market_cache, &token_ids).await;
+
+    let mut resolved: std::collections::HashMap<String, ResolvedMarket> =
+        std::collections::HashMap::new();
+    for (id, m) in info {
+        let market = ResolvedMarket {
+            question: m.question,
+            outcome: m.outcome,
+            category: m.category,
+            active: m.active,
+            gamma_token_id: m.gamma_token_id.clone(),
+        };
+        // Key by both input ID and gamma_token_id so frontend lookups
+        // work regardless of which asset_id format is used.
+        if id != m.gamma_token_id {
+            resolved.insert(id, market.clone());
+        }
+        resolved.insert(m.gamma_token_id, market);
+    }
+
+    Ok(Json(resolved))
 }
 
 fn shorten_id(id: &str) -> String {

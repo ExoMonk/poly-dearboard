@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { fetchRecentTrades } from "../api";
+import { fetchRecentTrades, fetchMarketResolve } from "../api";
 import Spinner from "../components/Spinner";
 import {
   formatUsd,
@@ -14,7 +14,7 @@ import {
 function formatCents(priceStr: string): string {
   const num = parseFloat(priceStr);
   if (isNaN(num)) return "\u2014";
-  return `${Math.round(num * 100)}\u00a2`;
+  return `${(num * 100).toFixed(2)}\u00a2`;
 }
 
 export default function MarketDetail() {
@@ -30,6 +30,15 @@ export default function MarketDetail() {
     queryFn: () => fetchRecentTrades({ limit: 50, token_id: decodedTokenIds }),
     enabled: !!decodedTokenIds,
     refetchInterval: 5_000,
+  });
+
+  // On-demand resolve: fetch market info for token IDs not in server cache.
+  // Fires once per page visit; the server caches the result for future requests.
+  const { data: resolved } = useQuery({
+    queryKey: ["marketResolve", decodedTokenIds],
+    queryFn: () => fetchMarketResolve(decodedTokenIds),
+    enabled: !!decodedTokenIds,
+    staleTime: Infinity,
   });
 
   // Highlight newly appeared trades
@@ -56,14 +65,55 @@ export default function MarketDetail() {
       </div>
     );
 
+  // Derive question: prefer resolved data (on-demand fetch), fall back to trade data
   const firstTrade = data?.trades[0];
-  const question = firstTrade?.question ?? "Unknown Market";
+  const resolvedFirst = firstTrade && resolved?.[firstTrade.asset_id];
+  const question =
+    resolvedFirst?.question || firstTrade?.question || "Unknown Market";
 
-  // Derive Yes/No prices from latest trade of each outcome
-  const latestYes = data?.trades.find((t) => t.outcome?.toLowerCase() === "yes");
-  const latestNo = data?.trades.find((t) => t.outcome?.toLowerCase() === "no");
-  const yesPrice = latestYes ? parseFloat(latestYes.price) : NaN;
-  const noPrice = latestNo ? parseFloat(latestNo.price) : NaN;
+  // Derive Yes/No prices from the most recent trade.
+  // Binary outcome tokens always sum to $1, so derive the complement.
+  // Token ID order from URL: first = Yes, second = No (Polymarket convention).
+  const tokenList = decodedTokenIds.split(",").map((s) => s.trim());
+  let yesPrice = NaN;
+  let noPrice = NaN;
+  if (data && data.trades.length > 0) {
+    // Build a map: asset_id → most recent trade (trades are sorted newest-first)
+    const latestByToken = new Map<string, (typeof data.trades)[0]>();
+    for (const t of data.trades) {
+      if (!latestByToken.has(t.asset_id)) latestByToken.set(t.asset_id, t);
+    }
+
+    // Identify Yes/No tokens: prefer outcome label (from trade or resolved), fall back to URL order
+    let yesTokenId: string | undefined;
+    let noTokenId: string | undefined;
+    for (const [id, trade] of latestByToken) {
+      const outcome = trade.outcome || resolved?.[id]?.outcome || "";
+      if (outcome.toLowerCase() === "yes") yesTokenId = id;
+      else if (outcome.toLowerCase() === "no") noTokenId = id;
+    }
+    if (!yesTokenId && !noTokenId && tokenList.length >= 2) {
+      yesTokenId = tokenList[0];
+      noTokenId = tokenList[1];
+    } else if (!yesTokenId && noTokenId) {
+      yesTokenId = [...latestByToken.keys()].find((id) => id !== noTokenId);
+    } else if (yesTokenId && !noTokenId) {
+      noTokenId = [...latestByToken.keys()].find((id) => id !== yesTokenId);
+    }
+
+    // Use the most recent trade (index 0) and derive complement
+    const anchor = data.trades[0];
+    const anchorPrice = parseFloat(anchor.price);
+    if (!isNaN(anchorPrice)) {
+      if (anchor.asset_id === noTokenId) {
+        noPrice = anchorPrice;
+        yesPrice = 1 - anchorPrice;
+      } else {
+        yesPrice = anchorPrice;
+        noPrice = 1 - anchorPrice;
+      }
+    }
+  }
 
   return (
     <div className="space-y-8">
@@ -138,15 +188,20 @@ export default function MarketDetail() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <span
-                          className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
-                            t.outcome?.toLowerCase() === "yes"
-                              ? "bg-[var(--neon-green)]/10 text-[var(--neon-green)]"
-                              : "bg-[var(--neon-red)]/10 text-[var(--neon-red)]"
-                          }`}
-                        >
-                          {t.outcome || "\u2014"}
-                        </span>
+                        {(() => {
+                          const outcome = t.outcome || resolved?.[t.asset_id]?.outcome || "";
+                          return (
+                            <span
+                              className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
+                                outcome.toLowerCase() === "yes"
+                                  ? "bg-[var(--neon-green)]/10 text-[var(--neon-green)]"
+                                  : "bg-[var(--neon-red)]/10 text-[var(--neon-red)]"
+                              }`}
+                            >
+                              {outcome || "\u2014"}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-[var(--text-primary)] text-xs">
                         {formatNumber(t.amount)}
