@@ -1,6 +1,9 @@
 # Poly Dearboard
 
-On-chain Polymarket leaderboard built from ground-truth trade data. Indexes `OrderFilled` events directly from the CTF Exchange and NegRisk Exchange contracts on Polygon — no reliance on Polymarket's API for trade data.
+[![rindexer](https://img.shields.io/badge/Powered%20by-rindexer-6C5CE7)](https://github.com/joshstevens19/rindexer)
+
+On-chain Polymarket leaderboard built from ground-truth trade data.
+Indexes `OrderFilled` events directly from the CTF Exchange and NegRisk Exchange contracts on Polygon — no reliance on Polymarket's API for trade data.
 
 ![Leaderboard](assets/leaderboard.png)
 
