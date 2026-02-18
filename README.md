@@ -1,103 +1,92 @@
-# poly-dearboard
+# Poly Dearboard
 
-Polymarket's official leaderboard API data isn't 100% reliable. We're building our own leaderboard by indexing on-chain trade events directly from the CTF Exchange and NegRisk Exchange contracts on Polygon, giving us ground-truth data for trader PnL, volume, and rankings.
+On-chain Polymarket leaderboard built from ground-truth trade data. Indexes `OrderFilled` events directly from the CTF Exchange and NegRisk Exchange contracts on Polygon — no reliance on Polymarket's API for trade data.
 
-## Run
+![Leaderboard](assets/leaderboard.png)
 
-| Target | What it does |
-| --- | --- |
-| `make indexer` | Starts ClickHouse (background) + rindexer (foreground with logs) |
-| `make serve` | Starts the Axum API on port 3001 |
-| `make query` | Runs E2E leaderboard queries (PnL, volume, trade count, trader detail) |
-| `make clean` | Tears down Docker containers + volumes |
+## Features
 
-**`scripts/indexer.sh`** --- Starts ClickHouse, waits for health, prints an endpoint table:
+**Leaderboard** — Rank traders by mark-to-market PnL, volume, or trade count. Scatter chart visualizes efficiency (Return on Volume %) vs performance.
 
--   ClickHouse Play UI: `http://localhost:8123/play`
--   ClickHouse Prometheus: `http://localhost:9363/metrics`
--   rindexer Health: `http://localhost:8080/health`
--   rindexer Metrics: `http://localhost:8080/metrics`
+**Trader Detail** — Per-trader stats, open positions valued at live market prices, trade activity chart, and full trade history.
+
+<p align="center">
+  <img src="assets/trader_1.png" width="49%" />
+  <img src="assets/trader_2.png" width="49%" />
+</p>
+
+**Hot Markets** — Most active markets by volume (1h / 24h / 7d) with category tags and trader counts.
+
+![Hot Markets](assets/hot-market.png)
+
+**Market Live Feed** — Per-market real-time trade feed with Yes/No outcome display and price bars.
+
+![Live Feed](assets/live-feed.png)
 
 ## Stack
 
-- **Indexer**: custom rindexer
-- **Storage**: ClickHouse (columnar OLAP)
-- **Normalization**: ClickHouse materialized views (trade splitting, buy/sell logic)
-- **API**: Thin axum REST server querying ClickHouse directly
-- **Chain**: Polygon (chain_id: 137)
-- **Real-time**: ~2-4s block-to-query latency via rindexer polling
+| Layer | Technology |
+| --- | --- |
+| Indexer | [rindexer](https://github.com/joshstevens19/rindexer) (no-code mode) |
+| Storage | ClickHouse (columnar OLAP) |
+| Normalization | ClickHouse materialized views |
+| API | Rust / Axum |
+| Frontend | React + TypeScript + Recharts + Tailwind |
+| Chain | Polygon (chain_id: 137) |
 
-```text
-Polygon Chain (2s blocks)
-    ↓ eth_getLogs (rindexer polls every ~500ms)
+## Architecture
+
+```
+Polygon (2s blocks)
+  ↓ eth_getLogs
 rindexer no-code indexer
-    ↓ auto-insert raw events
-ClickHouse (raw event tables)
-    ↓ materialized views
-ClickHouse (normalized trades, leaderboard aggregates)
-    ↓ SQL queries
-Axum REST API → Frontend
+  ↓ raw events
+ClickHouse (OrderFilled, PayoutRedemption tables)
+  ↓ materialized views
+ClickHouse (normalized trades: trader, side, asset, price, amount)
+  ↓ CTE queries
+Axum REST API ← React frontend
 ```
 
-**How Close to Real-Time?**
------------------------
+## PnL Methodology
 
-**~2-4 seconds end-to-end** with optimal config on Polygon:
+Uses **mark-to-market** PnL rather than pure cash-flow:
 
-| Stage | Latency | Notes |
+```
+PnL = sum_per_asset(cash_flow + net_tokens × latest_market_price)
+```
+
+This values open positions at the current market price, producing meaningful PnL even with a partial indexing window. Closed positions (net_tokens = 0) reduce to pure cash-flow PnL.
+
+**Known limitation**: Market resolution redemptions (`PayoutRedemption` events) are not included in PnL because the event lacks an `asset_id` field, making per-position matching impossible without deriving token IDs from `keccak256(parentCollectionId, conditionId, indexSet)`. Mark-to-market approximates this well since winning tokens trade near $1.00 before resolution.
+
+## Run
+
+| Command | What it does |
+| --- | --- |
+| `make indexer` | Starts ClickHouse + rindexer |
+| `make serve` | Starts the Axum API on port 3001 |
+| `make query` | Runs E2E leaderboard queries |
+| `make clean` | Tears down Docker containers + volumes |
+| `make frontend` | Runs Polydearboard frontend |
+
+## API
+
+| Endpoint | Description |
+| --- | --- |
+| `GET /api/leaderboard` | Paginated trader rankings (sort: PnL, volume, trades) |
+| `GET /api/trader/{address}` | Single trader aggregate stats |
+| `GET /api/trader/{address}/trades` | Trade history with side filter + pagination |
+| `GET /api/trader/{address}/positions` | Open positions with market prices |
+| `GET /api/markets/hot` | Hot markets by volume (1h/24h/7d) |
+| `GET /api/trades/recent` | Live trade feed, filterable by token ID |
+| `GET /api/health` | Health check with trade/trader/block counts |
+
+## Data Lake
+
+| Database | Table | Source |
 | --- | --- | --- |
-| Polygon block time | 2s | Fixed --- block produced |
-| RPC propagation | 0-500ms | Depends on RPC quality |
-| rindexer polling | 50ms | `block_poll_frequency: "rapid"` |
-| eth_getLogs RPC call | 100-300ms | Single block, few events |
-| Event processing + ClickHouse insert | 15-35ms | Batch of ≤1000 rows |
-| Queryable | ~instant | ClickHouse, no WAL delay |
-| **Total** | **~2.2-3s** | From block to queryable data |
-
-**Polling modes available:**
-
--   `"rapid"` --- 50ms (aggressive, for paid RPCs)
--   `"/3"` --- 1/3 of block time (~666ms for Polygon)
--   `"optimized"` --- RPC-friendly (1/3, min 500ms)
--   `"1000"` --- fixed ms interval
-
-With a public RPC at 30 CU/s, `"/3"` (~666ms) is safer. With a paid RPC, `"rapid"` gets you sub-second after block.
-
-Multi-Output Streams
---------------------
-
-Custom indexer can simultaneously output to **webhooks, Kafka, RabbitMQ, Redis Streams, SNS, Cloudflare Queues** --- all configurable in YAML alongside ClickHouse storage. This means we can push events to a WebSocket server for real-time frontend updates too.
-
-## Future Iterations (not in MVP scope)
-
-- Full historical backfill from contract deployment
-- Market metadata enrichment (question text, outcome names via Polymarket API)
-- Unrealized PnL (requires live CLOB prices)
-- Win/loss rate tracking
-- Frontend dashboard
-- Real-time streaming via rindexer streams (webhooks/Kafka/Redis)
-
------
-
-## DataLake
-
-- Schema names (database.schema):
-
-```
-poly_dearboard_ctf_exchange
-poly_dearboard_neg_risk_ctf_exchange
-poly_dearboard_conditional_tokens
-```
-
-- Table names:
-
-```
-poly_dearboard_ctf_exchange.order_filled
-poly_dearboard_neg_risk_ctf_exchange.order_filled
-poly_dearboard_conditional_tokens.payout_redemption
-```
-
-- **Schema**: `{snake_case(indexer_name)}_{snake_case(contract_name)}` → e.g. `poly_dearboard_ctf_exchange`
-- **Table**: `{schema}.{snake_case(event_name)}` → e.g. `poly_dearboard_ctf_exchange.order_filled`
-- **Engine**: `ReplacingMergeTree`, ORDER BY `(network, block_number, tx_hash, log_index)`
-- **Type mapping**: `address → FixedString(42)`, `uint256 → String`, `bytes32 → String`
+| `poly_dearboard_ctf_exchange` | `order_filled` | CTF Exchange OrderFilled events |
+| `poly_dearboard_neg_risk_ctf_exchange` | `order_filled` | NegRisk Exchange OrderFilled events |
+| `poly_dearboard_conditional_tokens` | `payout_redemption` | ConditionalTokens PayoutRedemption events |
+| `poly_dearboard` | `trades` | Normalized trades (via materialized views) |
