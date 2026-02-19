@@ -1,7 +1,10 @@
 /target
 .env
+.env.prod
 *.swp
 *.swo
 frontend/node_modules
 frontend/dist
 frontend/package-lock.json
+/specs
+deployments/polyderboard-prod

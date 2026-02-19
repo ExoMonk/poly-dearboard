@@ -1,3 +1,10 @@
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
 services:
   clickhouse:
     image: clickhouse/clickhouse-server:24-alpine
@@ -11,18 +18,21 @@ services:
       - "9363:9363"    # Prometheus metrics (/metrics)
     volumes:
       - chdata:/var/lib/clickhouse
-      - ../indexer/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql
-      - ../indexer/clickhouse/prometheus.xml:/etc/clickhouse-server/config.d/prometheus.xml
+      - ../../indexer/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ../../indexer/clickhouse/prometheus.xml:/etc/clickhouse-server/config.d/prometheus.xml
     healthcheck:
       test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
       interval: 5s
       retries: 5
+    <<: *logging
 
   erpc:
     image: ghcr.io/erpc/erpc:latest
     platform: linux/amd64
+    environment:
+      ALCHEMY_API_KEY: ${ALCHEMY_API_KEY:-}
     volumes:
-      - ../indexer/erpc_conf.yaml:/root/erpc_conf.yaml
+      - ../../indexer/erpc_conf.yaml:/root/erpc_conf.yaml
     ports:
       - "4000:4000"    # eRPC proxy
       - "4001:4001"    # eRPC admin/metrics
@@ -31,6 +41,7 @@ services:
       interval: 5s
       retries: 5
       start_period: 10s
+    <<: *logging
 
   indexer:
     image: ghcr.io/joshstevens19/rindexer:latest
@@ -45,17 +56,20 @@ services:
       CLICKHOUSE_USER: default
       CLICKHOUSE_PASSWORD: ""
       CLICKHOUSE_DB: poly_dearboard
+      RINDEXER_WEBHOOK_SECRET: ${RINDEXER_WEBHOOK_SECRET:-dev-secret}
+      WEBHOOK_URL: ${WEBHOOK_URL:-http://host.docker.internal:3001}
     ports:
       - "8080:8080"    # rindexer health + metrics
     volumes:
-      - ../indexer/polywatcher.yaml:/app/rindexer.yaml
-      - ../indexer/abi:/app/abi
+      - ../../indexer/polywatcher.yaml:/app/rindexer.yaml
+      - ../../indexer/abi:/app/abi
     command: ["start", "--path", "/app", "all"]
+    <<: *logging
 
   api:
     build:
-      context: ..
-      dockerfile: development/Dockerfile
+      context: ../..
+      dockerfile: deployments/Dockerfile
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -63,8 +77,15 @@ services:
       CLICKHOUSE_URL: http://clickhouse:8123
       CLICKHOUSE_DB: poly_dearboard
       API_PORT: "3001"
+      RINDEXER_WEBHOOK_SECRET: ${RINDEXER_WEBHOOK_SECRET:-dev-secret}
     ports:
       - "3001:3001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/api/health"]
+      interval: 10s
+      retries: 3
+      start_period: 5s
+    <<: *logging
 
 volumes:
   chdata:
