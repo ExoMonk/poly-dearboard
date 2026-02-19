@@ -24,6 +24,14 @@ contracts:
     abi: ./abi/CTFExchange.json
     include_events:
       - OrderFilled
+    streams:
+      webhooks:
+        - endpoint: ${WEBHOOK_URL}/api/webhooks/rindexer
+          shared_secret: ${RINDEXER_WEBHOOK_SECRET}
+          networks:
+            - polygon
+          events:
+            - event_name: OrderFilled
 
   - name: NegRiskCTFExchange
     details:
@@ -33,6 +41,14 @@ contracts:
     abi: ./abi/NegRiskCTFExchange.json
     include_events:
       - OrderFilled
+    streams:
+      webhooks:
+        - endpoint: ${WEBHOOK_URL}/api/webhooks/rindexer
+          shared_secret: ${RINDEXER_WEBHOOK_SECRET}
+          networks:
+            - polygon
+          events:
+            - event_name: OrderFilled
 
   - name: ConditionalTokens
     details:
@@ -43,3 +59,11 @@ contracts:
     include_events:
       - PayoutRedemption
       - ConditionResolution
+    streams:
+      webhooks:
+        - endpoint: ${WEBHOOK_URL}/api/webhooks/rindexer
+          shared_secret: ${RINDEXER_WEBHOOK_SECRET}
+          networks:
+            - polygon
+          events:
+            - event_name: ConditionResolution

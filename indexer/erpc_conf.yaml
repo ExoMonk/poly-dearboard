@@ -3,9 +3,8 @@ logLevel: warn
 projects:
   - id: main
     upstreams:
-      # Add your own RPC keys here for faster indexing:
-      #   - endpoint: evm+alchemy://YOUR_ALCHEMY_KEY
-      #   - endpoint: https://polygon-mainnet.quiknode.pro/YOUR_KEY
+      - endpoint: evm+alchemy://${ALCHEMY_API_KEY}
+      - endpoint: https://polygon.api.onfinality.io/public
+      # Public fallbacks
       - endpoint: https://polygon-rpc.com
       - endpoint: https://polygon.drpc.org
-      - endpoint: https://polygon.api.onfinality.io/public

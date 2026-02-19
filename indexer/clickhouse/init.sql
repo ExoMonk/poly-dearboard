@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS poly_dearboard_ctf_exchange.order_filled (
     INDEX idx_network (network) TYPE bloom_filter GRANULARITY 1,
     INDEX idx_tx_hash (tx_hash) TYPE bloom_filter GRANULARITY 1
 ) ENGINE = ReplacingMergeTree
-ORDER BY (network, block_number, tx_hash, log_index);
+ORDER BY (network, block_number, tx_hash, log_index)
+TTL ifNull(block_timestamp, toDateTime('1970-01-01')) + INTERVAL 1 DAY;
 
 -- NegRisk CTF Exchange
 CREATE DATABASE IF NOT EXISTS poly_dearboard_neg_risk_ctf_exchange;
@@ -63,7 +64,8 @@ CREATE TABLE IF NOT EXISTS poly_dearboard_neg_risk_ctf_exchange.order_filled (
     INDEX idx_network (network) TYPE bloom_filter GRANULARITY 1,
     INDEX idx_tx_hash (tx_hash) TYPE bloom_filter GRANULARITY 1
 ) ENGINE = ReplacingMergeTree
-ORDER BY (network, block_number, tx_hash, log_index);
+ORDER BY (network, block_number, tx_hash, log_index)
+TTL ifNull(block_timestamp, toDateTime('1970-01-01')) + INTERVAL 1 DAY;
 
 -- Conditional Tokens
 CREATE DATABASE IF NOT EXISTS poly_dearboard_conditional_tokens;
@@ -224,3 +226,15 @@ AS SELECT
     order_hash, tx_hash, block_number, block_timestamp, log_index, network
 FROM poly_dearboard_neg_risk_ctf_exchange.order_filled
 WHERE taker_asset_id = '0';
+
+-- =============================================================================
+-- 4. Resolved prices: on-chain ConditionResolution → exact price per asset
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS poly_dearboard.resolved_prices (
+    asset_id       String,
+    resolved_price String,
+    condition_id   String,
+    block_number   UInt64
+) ENGINE = ReplacingMergeTree
+ORDER BY (asset_id);
