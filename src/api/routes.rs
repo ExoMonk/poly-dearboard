@@ -839,6 +839,147 @@ pub async fn verify_access_code(
     }
 }
 
+pub async fn smart_money(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let exclude = exclude_clause();
+
+    let query = format!(
+        "WITH
+            latest_prices AS (
+                SELECT asset_id,
+                       argMax(price, block_number * 1000000 + log_index) AS latest_price
+                FROM poly_dearboard.trades
+                GROUP BY asset_id
+            ),
+            resolved AS (
+                SELECT asset_id, toNullable(toFloat64(resolved_price)) AS resolved_price
+                FROM poly_dearboard.resolved_prices FINAL
+            ),
+            trader_pnl AS (
+                SELECT trader,
+                       sum(cash_flow + net_tokens * coalesce(rp.resolved_price, toFloat64(lp.latest_price))) AS total_pnl
+                FROM (
+                    SELECT trader, asset_id,
+                           sumIf(amount, side = 'buy') - sumIf(amount, side = 'sell') AS net_tokens,
+                           sumIf(usdc_amount, side = 'sell') - sumIf(usdc_amount, side = 'buy') AS cash_flow
+                    FROM poly_dearboard.trades
+                    WHERE trader NOT IN ({exclude})
+                    GROUP BY trader, asset_id
+                ) p
+                LEFT JOIN latest_prices lp ON p.asset_id = lp.asset_id
+                LEFT JOIN resolved rp ON p.asset_id = rp.asset_id
+                GROUP BY trader
+                ORDER BY total_pnl DESC
+                LIMIT 10
+            ),
+            smart_positions AS (
+                SELECT p.asset_id AS asset_id,
+                       p.net_tokens AS net_tokens,
+                       toFloat64(lp.latest_price) AS price,
+                       p.net_tokens * toFloat64(lp.latest_price) AS exposure
+                FROM (
+                    SELECT trader, asset_id,
+                           sumIf(amount, side = 'buy') - sumIf(amount, side = 'sell') AS net_tokens
+                    FROM poly_dearboard.trades
+                    WHERE trader IN (SELECT trader FROM trader_pnl)
+                    GROUP BY trader, asset_id
+                    HAVING abs(net_tokens) > 0.01
+                ) p
+                LEFT JOIN latest_prices lp ON p.asset_id = lp.asset_id
+                LEFT JOIN resolved rp ON p.asset_id = rp.asset_id
+                WHERE rp.resolved_price IS NULL
+                  AND toFloat64(lp.latest_price) > 0.01
+                  AND toFloat64(lp.latest_price) < 0.99
+            )
+        SELECT
+            asset_id,
+            count() AS smart_trader_count,
+            countIf(net_tokens > 0) AS long_count,
+            countIf(net_tokens < 0) AS short_count,
+            toString(sum(if(net_tokens > 0, exposure, 0))) AS long_exposure,
+            toString(sum(if(net_tokens < 0, abs(exposure), 0))) AS short_exposure,
+            toString(avg(price)) AS avg_price
+        FROM smart_positions
+        GROUP BY asset_id
+        ORDER BY count() DESC, sum(abs(exposure)) DESC
+        LIMIT 20"
+    );
+
+    let rows = state
+        .db
+        .query(&query)
+        .fetch_all::<SmartMoneyRow>()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let token_ids: Vec<String> = rows.iter().map(|r| r.asset_id.clone()).collect();
+    let market_info =
+        markets::resolve_markets(&state.http, &state.market_cache, &token_ids).await;
+
+    // Merge Yes/No tokens of the same market into one entry
+    let mut merged: std::collections::HashMap<String, SmartMoneyMarket> =
+        std::collections::HashMap::new();
+
+    for r in rows {
+        let info = market_info.get(&r.asset_id);
+        let question = info
+            .map(|i| i.question.clone())
+            .unwrap_or_else(|| shorten_id(&r.asset_id));
+        let token_id = info
+            .map(|i| i.gamma_token_id.clone())
+            .unwrap_or_else(|| markets::to_integer_id(&r.asset_id));
+        let outcome = info.map(|i| i.outcome.clone()).unwrap_or_default();
+
+        let long_exp: f64 = r.long_exposure.parse().unwrap_or(0.0);
+        let short_exp: f64 = r.short_exposure.parse().unwrap_or(0.0);
+
+        if let Some(existing) = merged.get_mut(&question) {
+            let existing_long: f64 = existing.long_exposure.parse().unwrap_or(0.0);
+            let existing_short: f64 = existing.short_exposure.parse().unwrap_or(0.0);
+            existing.long_exposure = format!("{:.6}", existing_long + long_exp);
+            existing.short_exposure = format!("{:.6}", existing_short + short_exp);
+            existing.long_count += r.long_count;
+            existing.short_count += r.short_count;
+            // smart_trader_count: take max since same traders may hold both tokens
+            existing.smart_trader_count = existing.smart_trader_count.max(r.smart_trader_count);
+        } else {
+            merged.insert(
+                question.clone(),
+                SmartMoneyMarket {
+                    token_id,
+                    question,
+                    outcome,
+                    smart_trader_count: r.smart_trader_count,
+                    long_count: r.long_count,
+                    short_count: r.short_count,
+                    long_exposure: r.long_exposure,
+                    short_exposure: r.short_exposure,
+                    avg_price: r.avg_price,
+                },
+            );
+        }
+    }
+
+    let mut markets: Vec<SmartMoneyMarket> = merged.into_values().collect();
+    markets.sort_by(|a, b| {
+        b.smart_trader_count
+            .cmp(&a.smart_trader_count)
+            .then_with(|| {
+                let a_total: f64 = a.long_exposure.parse::<f64>().unwrap_or(0.0)
+                    + a.short_exposure.parse::<f64>().unwrap_or(0.0);
+                let b_total: f64 = b.long_exposure.parse::<f64>().unwrap_or(0.0)
+                    + b.short_exposure.parse::<f64>().unwrap_or(0.0);
+                b_total
+                    .partial_cmp(&a_total)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    });
+    markets.truncate(10);
+
+    Ok(Json(SmartMoneyResponse { markets }))
+}
+
 fn shorten_id(id: &str) -> String {
     if id.len() <= 12 {
         id.to_string()

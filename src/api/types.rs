@@ -263,3 +263,34 @@ pub struct ResolvedMarket {
     /// Full-precision token ID from Gamma API (for display/linking)
     pub gamma_token_id: String,
 }
+
+// -- Smart Money Signal --
+
+#[derive(Row, Deserialize)]
+pub struct SmartMoneyRow {
+    pub asset_id: String,
+    pub smart_trader_count: u64,
+    pub long_count: u64,
+    pub short_count: u64,
+    pub long_exposure: String,
+    pub short_exposure: String,
+    pub avg_price: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct SmartMoneyMarket {
+    pub token_id: String,
+    pub question: String,
+    pub outcome: String,
+    pub smart_trader_count: u64,
+    pub long_count: u64,
+    pub short_count: u64,
+    pub long_exposure: String,
+    pub short_exposure: String,
+    pub avg_price: String,
+}
+
+#[derive(Serialize)]
+pub struct SmartMoneyResponse {
+    pub markets: Vec<SmartMoneyMarket>,
+}

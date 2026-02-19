@@ -69,7 +69,8 @@ pub async fn run(client: clickhouse::Client, port: u16) {
         .route("/trades/recent", get(routes::recent_trades))
         .route("/health", get(routes::health))
         .route("/market/resolve", get(routes::resolve_market))
-        .route("/auth/verify", post(routes::verify_access_code));
+        .route("/auth/verify", post(routes::verify_access_code))
+        .route("/smart-money", get(routes::smart_money));
 
     let app = Router::new()
         .nest("/api", api)

@@ -492,7 +492,7 @@ async fn handle_trades_ws(
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!("Trades WS client lagged, skipped {n} trades");
+                        tracing::debug!("Trades WS client lagged, skipped {n} trades");
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                 }
