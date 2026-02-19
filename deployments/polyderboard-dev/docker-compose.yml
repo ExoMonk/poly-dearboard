@@ -78,6 +78,7 @@ services:
       CLICKHOUSE_DB: poly_dearboard
       API_PORT: "3001"
       RINDEXER_WEBHOOK_SECRET: ${RINDEXER_WEBHOOK_SECRET:-dev-secret}
+      ACCESS_CODE: ${ACCESS_CODE:-}
     ports:
       - "3001:3001"
     healthcheck:

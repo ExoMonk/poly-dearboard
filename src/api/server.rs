@@ -2,7 +2,7 @@ use axum::{routing::{get, post}, Router};
 use tokio::sync::broadcast;
 use tower_http::cors::{Any, CorsLayer};
 
-use super::{alerts, markets, routes};
+use super::{alerts, markets, routes, scanner};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -10,6 +10,7 @@ pub struct AppState {
     pub http: reqwest::Client,
     pub market_cache: markets::MarketCache,
     pub alert_tx: broadcast::Sender<alerts::Alert>,
+    pub trade_tx: broadcast::Sender<alerts::LiveTrade>,
 }
 
 pub async fn run(client: clickhouse::Client, port: u16) {
@@ -19,12 +20,14 @@ pub async fn run(client: clickhouse::Client, port: u16) {
         .allow_headers(Any);
 
     let (alert_tx, _) = broadcast::channel::<alerts::Alert>(256);
+    let (trade_tx, _) = broadcast::channel::<alerts::LiveTrade>(512);
 
     let state = AppState {
         db: client,
         http: reqwest::Client::new(),
         market_cache: markets::new_cache(),
         alert_tx,
+        trade_tx,
     };
 
     // Pre-warm the market name cache in the background, then refresh periodically
@@ -47,18 +50,32 @@ pub async fn run(client: clickhouse::Client, port: u16) {
         });
     }
 
+    // Phantom fill scanner: polls Polygon blocks for reverted exchange TXs
+    {
+        let rpc_url = std::env::var("POLYGON_RPC_URL")
+            .unwrap_or_else(|_| "http://erpc:4000/main/evm/137".into());
+        let http = state.http.clone();
+        let alert_tx = state.alert_tx.clone();
+        tokio::spawn(scanner::run(http, rpc_url, alert_tx));
+    }
+
+    let api = Router::new()
+        .route("/leaderboard", get(routes::leaderboard))
+        .route("/trader/{address}", get(routes::trader_stats))
+        .route("/trader/{address}/trades", get(routes::trader_trades))
+        .route("/trader/{address}/positions", get(routes::trader_positions))
+        .route("/trader/{address}/pnl-chart", get(routes::pnl_chart))
+        .route("/markets/hot", get(routes::hot_markets))
+        .route("/trades/recent", get(routes::recent_trades))
+        .route("/health", get(routes::health))
+        .route("/market/resolve", get(routes::resolve_market))
+        .route("/auth/verify", post(routes::verify_access_code));
+
     let app = Router::new()
-        .route("/api/leaderboard", get(routes::leaderboard))
-        .route("/api/trader/{address}", get(routes::trader_stats))
-        .route("/api/trader/{address}/trades", get(routes::trader_trades))
-        .route("/api/trader/{address}/positions", get(routes::trader_positions))
-        .route("/api/trader/{address}/pnl-chart", get(routes::pnl_chart))
-        .route("/api/markets/hot", get(routes::hot_markets))
-        .route("/api/trades/recent", get(routes::recent_trades))
-        .route("/api/health", get(routes::health))
-        .route("/api/market/resolve", get(routes::resolve_market))
-        .route("/api/webhooks/rindexer", post(alerts::webhook_handler))
-        .route("/api/ws/alerts", get(alerts::ws_handler))
+        .nest("/api", api)
+        .route("/webhooks/rindexer", post(alerts::webhook_handler))
+        .route("/ws/alerts", get(alerts::ws_handler))
+        .route("/ws/trades", get(alerts::trades_ws_handler))
         .layer(cors)
         .with_state(state);
 

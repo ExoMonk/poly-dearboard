@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-API="http://localhost:3001"
+API="http://localhost:3001/api"
 
 # Colors
 BOLD="\033[1m"
@@ -77,7 +77,7 @@ fmt_num() {
 
 # ── Health ───────────────────────────────────────────────────────────────────
 header "Health Check"
-health=$(fetch "$API/api/health") || { echo "  API not reachable. Is 'make serve' running?"; exit 1; }
+health=$(fetch "$API/health") || { echo "  API not reachable. Is 'make serve' running?"; exit 1; }
 
 trade_count=$(echo "$health" | jq -r '.trade_count')
 trader_count=$(echo "$health" | jq -r '.trader_count')
@@ -142,17 +142,17 @@ print_leaderboard() {
 
 # ── Leaderboard: Top 10 by PnL ──────────────────────────────────────────────
 header "Top 10 by Realized PnL"
-lb_pnl=$(fetch "$API/api/leaderboard?sort=realized_pnl&order=desc&limit=10") && \
+lb_pnl=$(fetch "$API/leaderboard?sort=realized_pnl&order=desc&limit=10") && \
     print_leaderboard "$lb_pnl" "pnl"
 
 # ── Leaderboard: Top 10 by Volume ───────────────────────────────────────────
 header "Top 10 by Volume"
-lb_vol=$(fetch "$API/api/leaderboard?sort=total_volume&order=desc&limit=10") && \
+lb_vol=$(fetch "$API/leaderboard?sort=total_volume&order=desc&limit=10") && \
     print_leaderboard "$lb_vol" "volume"
 
 # ── Leaderboard: Top 10 by Trade Count ──────────────────────────────────────
 header "Top 10 by Trade Count"
-lb_trades=$(fetch "$API/api/leaderboard?sort=trade_count&order=desc&limit=10") && \
+lb_trades=$(fetch "$API/leaderboard?sort=trade_count&order=desc&limit=10") && \
     print_leaderboard "$lb_trades" "trades"
 
 # ── Trader Detail ────────────────────────────────────────────────────────────
@@ -165,7 +165,7 @@ if [ -n "$TOP_TRADER" ]; then
     echo -e "  Address: ${BOLD}${TOP_TRADER}${RESET}"
     echo ""
 
-    detail=$(fetch "$API/api/trader/$TOP_TRADER") && {
+    detail=$(fetch "$API/trader/$TOP_TRADER") && {
         echo -e "  Realized PnL:  ${GREEN}$(fmt_num "$(echo "$detail" | jq -r '.realized_pnl')")${RESET}"
         echo -e "  Total Volume:  $(fmt_num "$(echo "$detail" | jq -r '.total_volume')")"
         echo -e "  Total Fees:    $(fmt_num "$(echo "$detail" | jq -r '.total_fees')")"
@@ -177,7 +177,7 @@ if [ -n "$TOP_TRADER" ]; then
 
     # ── Recent Trades ────────────────────────────────────────────────────────
     header "Recent Trades for $short"
-    trades_json=$(fetch "$API/api/trader/$TOP_TRADER/trades?limit=5") && {
+    trades_json=$(fetch "$API/trader/$TOP_TRADER/trades?limit=5") && {
         printf "  ${DIM}%-12s  %-19s  %-10s  %-4s  %12s  %10s  %12s  %10s${RESET}\n" \
             "Block" "Timestamp" "Exchange" "Side" "Amount" "Price" "USDC" "Fee"
         printf "  ${DIM}%-12s  %-19s  %-10s  %-4s  %12s  %10s  %12s  %10s${RESET}\n" \

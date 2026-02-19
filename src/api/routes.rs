@@ -824,6 +824,21 @@ pub async fn resolve_market(
     Ok(Json(resolved))
 }
 
+pub async fn verify_access_code(
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let expected = std::env::var("ACCESS_CODE").unwrap_or_default();
+    if expected.is_empty() {
+        return StatusCode::OK;
+    }
+    let provided = body.get("code").and_then(|v| v.as_str()).unwrap_or("");
+    if provided == expected {
+        StatusCode::OK
+    } else {
+        StatusCode::UNAUTHORIZED
+    }
+}
+
 fn shorten_id(id: &str) -> String {
     if id.len() <= 12 {
         id.to_string()

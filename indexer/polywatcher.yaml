@@ -26,7 +26,7 @@ contracts:
       - OrderFilled
     streams:
       webhooks:
-        - endpoint: ${WEBHOOK_URL}/api/webhooks/rindexer
+        - endpoint: ${WEBHOOK_URL}/webhooks/rindexer
           shared_secret: ${RINDEXER_WEBHOOK_SECRET}
           networks:
             - polygon
@@ -43,7 +43,7 @@ contracts:
       - OrderFilled
     streams:
       webhooks:
-        - endpoint: ${WEBHOOK_URL}/api/webhooks/rindexer
+        - endpoint: ${WEBHOOK_URL}/webhooks/rindexer
           shared_secret: ${RINDEXER_WEBHOOK_SECRET}
           networks:
             - polygon
@@ -61,7 +61,7 @@ contracts:
       - ConditionResolution
     streams:
       webhooks:
-        - endpoint: ${WEBHOOK_URL}/api/webhooks/rindexer
+        - endpoint: ${WEBHOOK_URL}/webhooks/rindexer
           shared_secret: ${RINDEXER_WEBHOOK_SECRET}
           networks:
             - polygon
