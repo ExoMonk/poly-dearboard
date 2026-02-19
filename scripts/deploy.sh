@@ -31,7 +31,8 @@ $SCP_CMD "$ROOT/indexer/abi/"* \
 echo "Pulling latest images and restarting..."
 $SSH_CMD "cd $REMOTE_DIR/deployments/polyderboard-prod && \
     docker compose -f docker-compose.prod.yml pull && \
-    docker compose -f docker-compose.prod.yml up -d"
+    docker compose -f docker-compose.prod.yml up -d && \
+    docker compose -f docker-compose.prod.yml restart erpc indexer"
 
 echo ""
 echo "Waiting for health check..."
