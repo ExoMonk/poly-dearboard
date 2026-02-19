@@ -1,14 +1,18 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  CartesianGrid,
-  ReferenceLine,
-} from "recharts";
+  createChart,
+  AreaSeries,
+  LineSeries,
+  createSeriesMarkers,
+  CrosshairMode,
+  ColorType,
+  LineType,
+  type IChartApi,
+  type ISeriesApi,
+  type ISeriesMarkersPluginApi,
+  type UTCTimestamp,
+  type Time,
+} from "lightweight-charts";
 import { motion } from "motion/react";
 import type { PricePoint, MarketWsStatus, BidAsk } from "../types";
 import { panelVariants } from "../lib/motion";
@@ -20,106 +24,28 @@ interface Props {
   bidAsk: BidAsk;
 }
 
-const WINDOWS = { "1m": 60_000, "5m": 300_000 } as const;
+const WINDOWS = { "1m": 60, "5m": 300 } as const;
 type TimeWindow = keyof typeof WINDOWS;
 
-const TOOLTIP_STYLE = {
-  backgroundColor: "rgba(10, 18, 40, 0.95)",
-  border: "1px solid rgba(59, 130, 246, 0.2)",
-  borderRadius: 8,
-  fontSize: 12,
-  boxShadow: "0 4px 20px rgba(0, 0, 0, 0.5)",
-  padding: "10px 14px",
-};
-
-interface ChartDatum {
-  timestamp: number;
-  yes: number;
-  no: number;
-  isOurTrade: boolean;
+function toSec(ms: number): UTCTimestamp {
+  return Math.floor(ms / 1000) as UTCTimestamp;
 }
 
-function formatTick(ts: number): string {
-  const d = new Date(ts);
-  return d.toLocaleTimeString("en-US", {
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
-}
-
-function CustomTooltip({
-  active,
-  payload,
-}: {
-  active?: boolean;
-  payload?: Array<{ payload: ChartDatum }>;
-}) {
-  if (!active || !payload?.length) return null;
-  const d = payload[0].payload;
-
-  return (
-    <div style={TOOLTIP_STYLE}>
-      <div
-        style={{
-          color: "var(--accent-blue)",
-          marginBottom: 6,
-          fontSize: 11,
-          fontFamily: "monospace",
-        }}
-      >
-        {new Date(d.timestamp).toLocaleTimeString("en-US", {
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-          hour12: false,
-        })}
-      </div>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "auto auto",
-          gap: "2px 12px",
-        }}
-      >
-        <span style={{ color: "var(--neon-green)" }}>Yes</span>
-        <span style={{ color: "var(--neon-green)", fontFamily: "monospace" }}>
-          {d.yes.toFixed(1)}&cent;
-        </span>
-        <span style={{ color: "var(--neon-red)" }}>No</span>
-        <span style={{ color: "var(--neon-red)", fontFamily: "monospace" }}>
-          {d.no.toFixed(1)}&cent;
-        </span>
-      </div>
-      {d.isOurTrade && (
-        <div style={{ color: "var(--accent-blue)", fontSize: 10, marginTop: 4 }}>
-          Indexed trade (on-chain)
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Large ring dot for our indexed on-chain trades */
-function TradeDot(props: { cx?: number; cy?: number; payload?: ChartDatum }) {
-  const { cx, cy, payload } = props;
-  if (!payload?.isOurTrade || cx == null || cy == null) return null;
-  return (
-    <g>
-      {/* Outer glow */}
-      <circle cx={cx} cy={cy} r={10} fill="rgba(59, 130, 246, 0.15)" />
-      {/* Ring */}
-      <circle
-        cx={cx}
-        cy={cy}
-        r={6}
-        fill="var(--accent-blue)"
-        stroke="white"
-        strokeWidth={2}
-        fillOpacity={0.9}
-      />
-    </g>
-  );
+/** Deduplicate price points into {time (sec), value (cents)}, optionally filtered by timestamp set. */
+function buildSeries(
+  points: PricePoint[],
+  filter?: Set<number>,
+): { time: UTCTimestamp; value: number }[] {
+  const map = new Map<number, number>();
+  for (const p of points) {
+    if (filter && !filter.has(p.timestamp)) continue;
+    const sec = Math.floor(p.timestamp / 1000);
+    if (!Number.isFinite(sec) || !Number.isFinite(p.yesPrice)) continue;
+    map.set(sec, p.yesPrice * 100);
+  }
+  return Array.from(map.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([t, v]) => ({ time: t as UTCTimestamp, value: v }));
 }
 
 export default function LivePriceChart({
@@ -128,93 +54,300 @@ export default function LivePriceChart({
   status,
   bidAsk,
 }: Props) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const polyRef = useRef<ISeriesApi<"Area"> | null>(null);
+  const chainRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  const tooltipRef = useRef<HTMLDivElement | null>(null);
+  const dotRef = useRef<HTMLDivElement | null>(null);
+  const latestRef = useRef<number | null>(null);
+  const animRef = useRef<number | null>(null); // current lerp'd value
+  const rangeSetRef = useRef(false); // whether initial range has been set
+  const windowRef = useRef<TimeWindow>("5m");
   const [timeWindow, setTimeWindow] = useState<TimeWindow>("5m");
-  const [tick, setTick] = useState(Date.now());
 
-  // Tick every second so the sliding window moves in real time
+  windowRef.current = timeWindow;
+
   useEffect(() => {
-    const id = setInterval(() => setTick(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  const windowMs = WINDOWS[timeWindow];
-  const windowStart = tick - windowMs;
-
-  // Build chart data: filter to visible window + extend to "now"
-  const { data, yDomain, currentYes } = useMemo(() => {
-    // Convert to chart coordinates (cents) and filter to window
-    const visible: ChartDatum[] = [];
-    let lastBeforeWindow: ChartDatum | null = null;
-
-    for (const p of priceHistory) {
-      const datum: ChartDatum = {
-        timestamp: p.timestamp,
-        yes: Math.round(p.yesPrice * 10000) / 100,
-        no: Math.round(p.noPrice * 10000) / 100,
-        isOurTrade: tradeMarkers.has(p.timestamp),
-      };
-
-      if (p.timestamp < windowStart) {
-        // Keep track of the last point before window for continuity
-        lastBeforeWindow = datum;
-      } else {
-        visible.push(datum);
-      }
+    if (priceHistory.length > 0) {
+      latestRef.current =
+        priceHistory[priceHistory.length - 1].yesPrice * 100;
     }
+  }, [priceHistory]);
 
-    // Prepend the last-before-window point at the window edge for line continuity
-    if (lastBeforeWindow && visible.length > 0) {
-      visible.unshift({
-        ...lastBeforeWindow,
-        timestamp: windowStart,
-        isOurTrade: false,
+  // ── Create chart (mount only) ─────────────────────────────────────
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const chart = createChart(el, {
+      width: el.clientWidth,
+      height: 280,
+      layout: {
+        background: { type: ColorType.Solid, color: "transparent" },
+        textColor: "rgba(148, 163, 184, 0.8)",
+        fontSize: 10,
+      },
+      grid: {
+        vertLines: { visible: false },
+        horzLines: { color: "rgba(59, 130, 246, 0.06)" },
+      },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: {
+          color: "rgba(59, 130, 246, 0.3)",
+          labelBackgroundColor: "rgba(10, 18, 40, 0.9)",
+        },
+        horzLine: {
+          color: "rgba(59, 130, 246, 0.3)",
+          labelBackgroundColor: "rgba(10, 18, 40, 0.9)",
+        },
+      },
+      timeScale: {
+        timeVisible: true,
+        secondsVisible: true,
+        borderVisible: false,
+        rightOffset: 5,
+        shiftVisibleRangeOnNewBar: true,
+      },
+      rightPriceScale: { borderVisible: false },
+      handleScroll: { mouseWheel: true, pressedMouseMove: true },
+      handleScale: { mouseWheel: true, pinch: true },
+    });
+
+    // Series 1 — Polymarket price (green area, curved spline)
+    const poly = chart.addSeries(AreaSeries, {
+      topColor: "rgba(0, 255, 136, 0.15)",
+      bottomColor: "rgba(0, 255, 136, 0.02)",
+      lineColor: "#00ff88",
+      lineWidth: 2,
+      lineType: LineType.Curved,
+      priceFormat: {
+        type: "custom",
+        formatter: (p: number) => `${p.toFixed(1)}\u00a2`,
+      },
+      crosshairMarkerVisible: true,
+      crosshairMarkerRadius: 5,
+      crosshairMarkerBorderColor: "#00ff88",
+      crosshairMarkerBackgroundColor: "rgba(10, 18, 40, 0.9)",
+    });
+
+    // Series 2 — On-chain indexed trades (small markers only, no line)
+    const chain = chart.addSeries(LineSeries, {
+      color: "#3b82f6",
+      lineWidth: 1,
+      lineVisible: false,
+      pointMarkersVisible: false,
+      priceFormat: {
+        type: "custom",
+        formatter: (p: number) => `${p.toFixed(1)}\u00a2`,
+      },
+      crosshairMarkerVisible: true,
+      crosshairMarkerRadius: 3,
+      crosshairMarkerBorderColor: "#3b82f6",
+      crosshairMarkerBackgroundColor: "rgba(10, 18, 40, 0.9)",
+    });
+
+    const markers = createSeriesMarkers(chain, []);
+
+    chartRef.current = chart;
+    polyRef.current = poly;
+    chainRef.current = chain;
+    markersRef.current = markers;
+
+    // ── Custom tooltip ──────────────────────────────────────────────
+    const tip = document.createElement("div");
+    tip.style.cssText = [
+      "position:absolute",
+      "display:none",
+      "z-index:10",
+      "pointer-events:none",
+      "background:rgba(10,18,40,0.95)",
+      "border:1px solid rgba(59,130,246,0.2)",
+      "border-radius:8px",
+      "padding:10px 14px",
+      "font-size:12px",
+      "box-shadow:0 4px 20px rgba(0,0,0,0.5)",
+    ].join(";");
+    el.style.position = "relative";
+    el.appendChild(tip);
+    tooltipRef.current = tip;
+
+    chart.subscribeCrosshairMove((param) => {
+      if (!param.point || param.time === undefined) {
+        tip.style.display = "none";
+        return;
+      }
+      const pVal = (
+        param.seriesData.get(poly) as { value?: number } | undefined
+      )?.value;
+      const cVal = (
+        param.seriesData.get(chain) as { value?: number } | undefined
+      )?.value;
+      const yes = pVal ?? cVal;
+      if (yes == null) {
+        tip.style.display = "none";
+        return;
+      }
+
+      const no = 100 - yes;
+      const d = new Date((param.time as number) * 1000);
+      const ts = d.toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
       });
+
+      tip.style.display = "block";
+      tip.innerHTML =
+        `<div style="color:var(--accent-blue);margin-bottom:6px;font-size:11px;font-family:monospace">${ts}</div>` +
+        `<div style="display:grid;grid-template-columns:auto auto;gap:2px 12px">` +
+        `<span style="color:#00ff88">Yes</span><span style="color:#00ff88;font-family:monospace">${yes.toFixed(1)}\u00a2</span>` +
+        `<span style="color:#ff3366">No</span><span style="color:#ff3366;font-family:monospace">${no.toFixed(1)}\u00a2</span>` +
+        `</div>` +
+        (cVal != null
+          ? `<div style="color:#3b82f6;font-size:10px;margin-top:4px">On-chain trade</div>`
+          : "");
+
+      const left =
+        param.point.x > el.clientWidth * 0.6
+          ? param.point.x - tip.offsetWidth - 15
+          : param.point.x + 15;
+      tip.style.left = `${Math.max(0, left)}px`;
+      tip.style.top = `${Math.max(0, param.point.y - 30)}px`;
+    });
+
+    // ── Glowing leading-edge dot ────────────────────────────────────
+    const dot = document.createElement("div");
+    dot.style.cssText = [
+      "position:absolute",
+      "width:8px",
+      "height:8px",
+      "border-radius:50%",
+      "background:#00ff88",
+      "box-shadow:0 0 6px #00ff88,0 0 14px rgba(0,255,136,0.4)",
+      "pointer-events:none",
+      "z-index:5",
+      "display:none",
+      "transform:translate(-50%,-50%)",
+    ].join(";");
+    el.appendChild(dot);
+    dotRef.current = dot;
+
+    // ── Resize ──────────────────────────────────────────────────────
+    const ro = new ResizeObserver((entries) => {
+      chart.applyOptions({ width: entries[0].contentRect.width });
+    });
+    ro.observe(el);
+
+    // ── 60fps lerp loop: smooth interpolation toward latest price ──
+    const LERP_SPEED = 0.08; // 8% per frame — same as Liveline
+    let frameId = 0;
+
+    const animate = () => {
+      const target = latestRef.current;
+      if (target != null) {
+        // Initialize animRef on first value
+        if (animRef.current == null) animRef.current = target;
+
+        // Lerp toward target
+        const diff = target - animRef.current;
+        if (Math.abs(diff) > 0.01) {
+          animRef.current += diff * LERP_SPEED;
+        } else {
+          animRef.current = target;
+        }
+
+        const now = toSec(Date.now());
+        poly.update({ time: now, value: animRef.current });
+
+        // Position glowing dot at leading edge
+        const x = chart.timeScale().timeToCoordinate(now);
+        const y = poly.priceToCoordinate(animRef.current);
+        if (x !== null && y !== null) {
+          dot.style.display = "block";
+          dot.style.left = `${x}px`;
+          dot.style.top = `${y}px`;
+        } else {
+          dot.style.display = "none";
+        }
+      }
+
+      frameId = requestAnimationFrame(animate);
+    };
+    frameId = requestAnimationFrame(animate);
+
+    return () => {
+      cancelAnimationFrame(frameId);
+      ro.disconnect();
+      dot.remove();
+      tip.remove();
+      chart.remove();
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Update data on priceHistory / tradeMarkers change ─────────────
+  useEffect(() => {
+    if (!polyRef.current || !chainRef.current || !markersRef.current) return;
+
+    const allData = buildSeries(priceHistory);
+    polyRef.current.setData(allData);
+
+    // Re-extend to "now" immediately with lerped value so setData doesn't cause a flash
+    const now = toSec(Date.now());
+    const extendVal = animRef.current ?? latestRef.current;
+    if (allData.length > 0 && extendVal != null && allData[allData.length - 1].time < now) {
+      polyRef.current.update({ time: now, value: extendVal });
     }
 
-    // Deduplicate by timestamp — keep last value, preserve trade markers
-    const deduped = new Map<number, ChartDatum>();
-    for (const d of visible) {
-      const existing = deduped.get(d.timestamp);
-      deduped.set(d.timestamp, existing?.isOurTrade && !d.isOurTrade
-        ? { ...d, isOurTrade: true }
-        : d,
-      );
-    }
-    visible.length = 0;
-    visible.push(...deduped.values());
+    const chainData = buildSeries(priceHistory, tradeMarkers);
+    chainRef.current.setData(chainData);
 
-    // Extend to "now" so line reaches the right edge
-    if (visible.length > 0) {
-      const last = visible[visible.length - 1];
-      if (tick - last.timestamp > 1000) {
-        visible.push({
-          timestamp: tick,
-          yes: last.yes,
-          no: last.no,
-          isOurTrade: false,
+    markersRef.current.setMarkers(
+      chainData.map((d) => ({
+        time: d.time,
+        position: "inBar" as const,
+        shape: "circle" as const,
+        color: "rgba(59, 130, 246, 0.6)",
+        size: 0.5,
+      })),
+    );
+
+    // Set visible range only once on initial data load
+    if (!rangeSetRef.current && chartRef.current && allData.length >= 2) {
+      rangeSetRef.current = true;
+      try {
+        const sec = WINDOWS[windowRef.current];
+        chartRef.current.timeScale().setVisibleRange({
+          from: (now - sec) as UTCTimestamp,
+          to: (now + 5) as UTCTimestamp,
         });
+      } catch {
+        // Chart may not be ready
       }
     }
+  }, [priceHistory, tradeMarkers]);
 
-    // Compute Y domain centered on Yes price with good padding
-    const yesValues = visible.map((d) => d.yes);
-    const curYes = yesValues.length > 0 ? yesValues[yesValues.length - 1] : 50;
-    const yMin = yesValues.length > 0 ? Math.min(...yesValues) : 40;
-    const yMax = yesValues.length > 0 ? Math.max(...yesValues) : 60;
-    const range = yMax - yMin;
+  // ── Snap visible range on time-window change ──────────────────────
+  useEffect(() => {
+    if (!chartRef.current || priceHistory.length < 2) return;
+    const now = toSec(Date.now());
+    try {
+      chartRef.current.timeScale().setVisibleRange({
+        from: (now - WINDOWS[timeWindow]) as UTCTimestamp,
+        to: (now + 3) as UTCTimestamp,
+      });
+    } catch {
+      // Chart may not have data yet
+    }
+  }, [timeWindow, priceHistory.length]);
 
-    // Ensure minimum 10¢ visible range, centered on the data
-    const minRange = 10;
-    const pad = Math.max(2, (Math.max(range, minRange) - range) / 2 + 2);
-    const domainMin = Math.max(0, Math.floor(yMin - pad));
-    const domainMax = Math.min(100, Math.ceil(yMax + pad));
-
-    return {
-      data: visible,
-      yDomain: [domainMin, domainMax] as [number, number],
-      currentYes: curYes,
-    };
-  }, [priceHistory, tradeMarkers, windowStart, tick]);
+  const currentYes =
+    priceHistory.length > 0
+      ? priceHistory[priceHistory.length - 1].yesPrice * 100
+      : null;
 
   return (
     <motion.div
@@ -230,14 +363,13 @@ export default function LivePriceChart({
           <h3 className="text-sm font-medium text-[var(--text-secondary)] uppercase tracking-wider">
             Price
           </h3>
-          {data.length >= 2 && (
+          {currentYes != null && (
             <span className="text-lg font-bold font-mono text-[var(--neon-green)]">
               {currentYes.toFixed(1)}&cent;
             </span>
           )}
         </div>
         <div className="flex items-center gap-3">
-          {/* Time window selector */}
           <div className="flex gap-1">
             {(Object.keys(WINDOWS) as TimeWindow[]).map((w) => (
               <button
@@ -284,104 +416,32 @@ export default function LivePriceChart({
       </div>
 
       {/* Chart */}
-      {data.length < 2 ? (
-        <p className="text-[var(--text-secondary)] text-center py-16 text-sm">
-          Waiting for price data...
-        </p>
-      ) : (
-        <ResponsiveContainer width="100%" height={280}>
-          <AreaChart
-            data={data}
-            margin={{ left: 10, right: 10, top: 10, bottom: 0 }}
-          >
-            <defs>
-              <linearGradient id="yesFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#00ff88" stopOpacity={0.15} />
-                <stop offset="100%" stopColor="#00ff88" stopOpacity={0.02} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid
-              strokeDasharray="3 3"
-              stroke="rgba(59, 130, 246, 0.06)"
-              vertical={false}
-            />
-            <XAxis
-              dataKey="timestamp"
-              type="number"
-              domain={[windowStart, tick]}
-              scale="time"
-              tick={{ fill: "var(--text-secondary)", fontSize: 10 }}
-              tickFormatter={formatTick}
-              axisLine={false}
-              tickLine={false}
-            />
-            <YAxis
-              domain={yDomain}
-              tick={{ fill: "var(--text-secondary)", fontSize: 10 }}
-              tickFormatter={(v: number) => `${v}\u00a2`}
-              axisLine={false}
-              tickLine={false}
-              width={40}
-            />
-            <Tooltip content={<CustomTooltip />} />
-            {/* 50¢ midline reference */}
-            <ReferenceLine
-              y={50}
-              stroke="rgba(59, 130, 246, 0.15)"
-              strokeDasharray="6 4"
-            />
-            {/* Yes price — primary line */}
-            <Area
-              type="monotone"
-              dataKey="yes"
-              stroke="#00ff88"
-              strokeWidth={2.5}
-              fill="url(#yesFill)"
-              dot={<TradeDot />}
-              activeDot={{
-                r: 5,
-                stroke: "#00ff88",
-                strokeWidth: 2,
-                fill: "var(--bg-deep)",
-              }}
-              isAnimationActive={false}
-            />
-            {/* No price — subtle complement */}
-            <Area
-              type="monotone"
-              dataKey="no"
-              stroke="#ff3366"
-              strokeWidth={1}
-              fill="none"
-              dot={false}
-              activeDot={{
-                r: 3,
-                stroke: "#ff3366",
-                strokeWidth: 1,
-                fill: "var(--bg-deep)",
-              }}
-              strokeDasharray="4 3"
-              strokeOpacity={0.4}
-              isAnimationActive={false}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-      )}
+      <div className="relative" style={{ height: 280 }}>
+        <div
+          ref={containerRef}
+          className="absolute inset-0"
+          style={{
+            opacity: priceHistory.length < 2 ? 0 : 1,
+            transition: "opacity 0.3s",
+          }}
+        />
+        {priceHistory.length < 2 && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <p className="text-[var(--text-secondary)] text-sm">
+              Waiting for price data...
+            </p>
+          </div>
+        )}
+      </div>
 
       {/* Legend */}
       <div className="flex items-center justify-center gap-6 mt-3">
         <span className="flex items-center gap-1.5 text-xs">
           <span className="w-4 h-0.5 bg-[var(--neon-green)] rounded" />
-          <span className="text-[var(--text-secondary)]">
-            Yes (Polymarket)
-          </span>
+          <span className="text-[var(--text-secondary)]">Polymarket</span>
         </span>
         <span className="flex items-center gap-1.5 text-xs">
-          <span className="w-4 h-0.5 bg-[var(--neon-red)] rounded opacity-40" />
-          <span className="text-[var(--text-secondary)]">No</span>
-        </span>
-        <span className="flex items-center gap-1.5 text-xs">
-          <span className="w-3 h-3 rounded-full bg-[var(--accent-blue)] border-2 border-white/80" />
+          <span className="w-4 h-0.5 bg-[#3b82f6] rounded" />
           <span className="text-[var(--text-secondary)]">
             On-chain Trades
           </span>

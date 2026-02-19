@@ -7,7 +7,7 @@ import Spinner from "../components/Spinner";
 import Pagination from "../components/Pagination";
 import AddressCell from "../components/AddressCell";
 import SortHeader from "../components/SortHeader";
-import PnlDistribution from "../charts/PnlDistribution";
+import SmartMoney from "../charts/SmartMoney";
 import { formatUsd, formatNumber, formatDate, timeAgo } from "../lib/format";
 import { tapScale } from "../lib/motion";
 
@@ -79,7 +79,7 @@ export default function Dashboard() {
       </div>
 
       {/* Chart */}
-      {data.traders.length > 0 && <PnlDistribution traders={data.traders.slice(0, 15)} />}
+      <SmartMoney />
 
       {/* Table */}
       <div className="glass overflow-hidden">

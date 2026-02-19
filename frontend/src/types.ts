@@ -118,6 +118,24 @@ export interface ResolvedMarket {
   gamma_token_id: string;
 }
 
+// Smart Money Signal
+
+export interface SmartMoneyMarket {
+  token_id: string;
+  question: string;
+  outcome: string;
+  smart_trader_count: number;
+  long_count: number;
+  short_count: number;
+  long_exposure: string;
+  short_exposure: string;
+  avg_price: string;
+}
+
+export interface SmartMoneyResponse {
+  markets: SmartMoneyMarket[];
+}
+
 // Alerts (WebSocket)
 
 export interface WhaleTradeAlert {

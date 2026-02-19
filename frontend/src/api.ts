@@ -8,6 +8,7 @@ import type {
   PositionsResponse,
   PnlChartResponse,
   ResolvedMarket,
+  SmartMoneyResponse,
   SortColumn,
   SortOrder,
   Timeframe,
@@ -103,5 +104,11 @@ export async function fetchMarketResolve(
   const sp = new URLSearchParams({ token_ids: tokenIds });
   const res = await fetch(`${BASE}/market/resolve?${sp}`);
   if (!res.ok) throw new Error(`Market resolve failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchSmartMoney(): Promise<SmartMoneyResponse> {
+  const res = await fetch(`${BASE}/smart-money`);
+  if (!res.ok) throw new Error(`Smart money fetch failed: ${res.status}`);
   return res.json();
 }

@@ -12,8 +12,11 @@ export default function useAlerts() {
   const retryRef = useRef(0);
 
   const connect = useCallback(() => {
+    // WS routes live outside /api nest — use origin only, strip path
     const base = import.meta.env.VITE_API_URL || "";
-    const wsBase = base ? base.replace(/^http/, "ws") : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
+    const wsBase = base
+      ? new URL(base).origin.replace(/^http/, "ws")
+      : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
     const url = `${wsBase}/ws/alerts`;
 
     const ws = new WebSocket(url);
