@@ -16,6 +16,10 @@ pub struct MarketInfo {
     pub condition_id: Option<String>,
     /// Index of this token within the market's clobTokenIds array (maps to payout_numerators)
     pub outcome_index: usize,
+    /// All token IDs for this market (both sides)
+    pub all_token_ids: Vec<String>,
+    /// All outcome names for this market (parallel to all_token_ids)
+    pub outcomes: Vec<String>,
 }
 
 /// Cache keyed by the first 15 significant digits of the token ID.
@@ -145,6 +149,8 @@ pub async fn warm_cache(http: &reqwest::Client, db: &clickhouse::Client, cache: 
                                     gamma_token_id: id.clone(),
                                     condition_id: market.condition_id.clone(),
                                     outcome_index: i,
+                                    all_token_ids: ids.clone(),
+                                    outcomes: outcomes.clone(),
                                 },
                             );
                             covered.insert(key);
@@ -418,6 +424,8 @@ async fn fetch_market_info(http: &reqwest::Client, token_id: &str) -> Option<Mar
         gamma_token_id,
         condition_id: market.condition_id,
         outcome_index: matched_idx.unwrap_or(0),
+        all_token_ids: ids,
+        outcomes,
     })
 }
 

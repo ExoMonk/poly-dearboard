@@ -262,6 +262,10 @@ pub struct ResolvedMarket {
     pub active: bool,
     /// Full-precision token ID from Gamma API (for display/linking)
     pub gamma_token_id: String,
+    /// All token IDs for this market (both sides)
+    pub all_token_ids: Vec<String>,
+    /// All outcome names (parallel to all_token_ids)
+    pub outcomes: Vec<String>,
 }
 
 // -- Smart Money Signal --
