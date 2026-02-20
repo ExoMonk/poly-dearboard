@@ -154,10 +154,14 @@ pub async fn webhook_handler(
             ..
         }) = alert
         {
-            if question.is_none() {
+            if question.is_some() {
+                tracing::info!("ConditionResolution enriched from cache: condition_id={condition_id}");
+            } else {
+                tracing::warn!("ConditionResolution cache miss: condition_id={condition_id}, trying Gamma API");
                 if let Some((q, outs, tid)) =
                     fetch_resolution_context(&state.http, condition_id).await
                 {
+                    tracing::info!("ConditionResolution enriched from Gamma: condition_id={condition_id}");
                     let winner = payout_numerators
                         .iter()
                         .enumerate()
@@ -171,10 +175,9 @@ pub async fn webhook_handler(
                         *token_id = Some(tid);
                     }
                 } else {
-                    tracing::debug!(
-                        "Dropping unresolvable ConditionResolution: condition_id={condition_id}"
+                    tracing::warn!(
+                        "ConditionResolution Gamma miss: condition_id={condition_id} (broadcasting with raw data)"
                     );
-                    alert = None;
                 }
             }
         }
@@ -313,10 +316,16 @@ fn parse_condition_resolution(
         .and_then(|v| serde_json::from_value(v.clone()).ok())
         .unwrap_or_default();
 
-    // Collect all cache entries matching this condition_id, sorted by outcome_index
+    // Collect all cache entries matching this condition_id, sorted by outcome_index.
+    // Compare without 0x prefix since on-chain events omit it but Gamma includes it.
+    let bare_cid = condition_id.strip_prefix("0x").unwrap_or(condition_id);
     let mut matched: Vec<&markets::MarketInfo> = cache
         .values()
-        .filter(|info| info.condition_id.as_deref() == Some(condition_id))
+        .filter(|info| {
+            info.condition_id.as_deref().is_some_and(|cid| {
+                cid.strip_prefix("0x").unwrap_or(cid) == bare_cid
+            })
+        })
         .collect();
     matched.sort_by_key(|info| info.outcome_index);
 
@@ -355,9 +364,14 @@ async fn fetch_resolution_context(
     http: &reqwest::Client,
     condition_id: &str,
 ) -> Option<(String, Vec<String>, String)> {
+    let cid_hex = if condition_id.starts_with("0x") {
+        condition_id.to_string()
+    } else {
+        format!("0x{condition_id}")
+    };
     let url = format!(
-        "https://gamma-api.polymarket.com/markets?condition_id={}",
-        condition_id
+        "https://gamma-api.polymarket.com/markets?condition_ids={}",
+        cid_hex
     );
     let resp = http
         .get(&url)
@@ -370,10 +384,15 @@ async fn fetch_resolution_context(
 
     // Find the market whose conditionId actually matches — Gamma may return
     // unrelated results if the filter param is silently ignored.
+    // Compare both with and without 0x prefix since formats vary.
+    let bare_id = condition_id.strip_prefix("0x").unwrap_or(condition_id);
     let market = body.iter().find(|m| {
         m.get("conditionId")
             .and_then(|v| v.as_str())
-            .is_some_and(|cid| cid == condition_id)
+            .is_some_and(|cid| {
+                let bare_cid = cid.strip_prefix("0x").unwrap_or(cid);
+                bare_cid == bare_id
+            })
     })?;
 
     let question = market.get("question")?.as_str()?.to_string();

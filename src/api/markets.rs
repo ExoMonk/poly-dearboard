@@ -27,23 +27,10 @@ pub fn new_cache() -> MarketCache {
     Arc::new(RwLock::new(HashMap::new()))
 }
 
-/// Convert any token ID to ClickHouse's stored format (f64 scientific notation).
-/// "43662442989674113827..." → "4.366244298967411e75"  (full-precision → scientific)
-/// "4.366244298967411e75"   → "4.366244298967411e75"  (already scientific, no-op)
-/// "0"                      → "0"                      (small values unchanged)
-pub fn to_clickhouse_id(id: &str) -> String {
-    if let Ok(f) = id.parse::<f64>() {
-        if f > 1e15 && f.is_finite() {
-            return format!("{:e}", f);
-        }
-    }
-    id.to_string()
-}
-
-/// Convert any token ID to an integer string (no scientific notation).
-/// "4.366244298967411e75" → "43662442989674110000..." (lossy but usable for display/API)
-/// "51797304566750985981..." → "51797304566750985981..." (already integer, no-op)
-/// Used as fallback when gamma_token_id is unavailable.
+/// Convert scientific notation to an integer string (no-op for already-integer IDs).
+/// "4.366244298967411e75" → "43662442989674110000..." (lossy but displayable)
+/// "51797304566750985981..." → "51797304566750985981..." (no-op)
+/// Only needed for legacy trades stored before the UInt256 migration.
 pub fn to_integer_id(id: &str) -> String {
     if id.contains('e') || id.contains('E') {
         if let Ok(f) = id.parse::<f64>() {
@@ -263,7 +250,9 @@ pub async fn populate_resolved_prices(db: &clickhouse::Client, cache: &MarketCac
             Some(c) => c,
             None => continue,
         };
-        let (numerators, block) = match resolution_map.get(cid.as_str()) {
+        // On-chain condition_id has no 0x prefix; Gamma stores it with 0x — strip for lookup
+        let bare_cid = cid.strip_prefix("0x").unwrap_or(cid);
+        let (numerators, block) = match resolution_map.get(bare_cid) {
             Some(r) => r,
             None => continue, // Not resolved on-chain
         };
@@ -388,7 +377,8 @@ pub async fn resolve_markets(
 
 async fn fetch_market_info(http: &reqwest::Client, token_id: &str) -> Option<MarketInfo> {
     // Gamma API requires integer token IDs — never scientific notation.
-    // Convert scientific notation to integer form (lossy but the API needs a plain number).
+    // After UInt256 migration, token_id is a full-precision integer string.
+    // For legacy scientific notation IDs, convert to integer form for Gamma lookup.
     let lookup_id = to_integer_id(token_id);
 
     let url = format!(
@@ -408,10 +398,7 @@ async fn fetch_market_info(http: &reqwest::Client, token_id: &str) -> Option<Mar
 
     let ids = market.parsed_token_ids();
     let outcomes = market.parsed_outcomes();
-    // Match by prefix since the lookup_id may be lossy
-    let matched_idx = ids
-        .iter()
-        .position(|id| id == &lookup_id || cache_key(id) == cache_key(token_id));
+    let matched_idx = ids.iter().position(|id| id == &lookup_id);
     let outcome = matched_idx
         .and_then(|idx| outcomes.get(idx).cloned())
         .unwrap_or_default();

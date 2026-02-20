@@ -409,12 +409,9 @@ pub async fn recent_trades(
         }
     }
 
-    // Convert any format (full-precision integers, scientific notation) to
-    // ClickHouse's stored format (f64 scientific notation) for exact matching.
-    let token_ids: Vec<String> = token_ids
-        .iter()
-        .map(|id| markets::to_clickhouse_id(id))
-        .collect();
+    // After UInt256 migration, asset_ids are full-precision integer strings.
+    // Pass through as-is for exact matching.
+    let token_ids: Vec<String> = token_ids.into_iter().map(String::from).collect();
 
     let query = if token_ids.is_empty() {
         format!(
