@@ -79,7 +79,7 @@ export default function Dashboard() {
       </div>
 
       {/* Chart */}
-      <SmartMoney />
+      <SmartMoney timeframe={timeframe} />
 
       {/* Table */}
       <div className="glass overflow-hidden">

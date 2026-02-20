@@ -1,14 +1,24 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "motion/react";
 import { Link } from "react-router-dom";
 import { fetchSmartMoney } from "../api";
 import { formatUsd } from "../lib/format";
 import { panelVariants } from "../lib/motion";
+import type { Timeframe } from "../types";
 
-export default function SmartMoney() {
+const TOP_OPTIONS = [10, 25, 50] as const;
+
+interface Props {
+  timeframe?: Timeframe;
+}
+
+export default function SmartMoney({ timeframe }: Props) {
+  const [top, setTop] = useState<number>(10);
+
   const { data, isLoading } = useQuery({
-    queryKey: ["smart-money"],
-    queryFn: fetchSmartMoney,
+    queryKey: ["smart-money", timeframe, top],
+    queryFn: () => fetchSmartMoney({ timeframe, top }),
     refetchInterval: 60_000,
   });
 
@@ -28,8 +38,23 @@ export default function SmartMoney() {
             Smart Money
           </h3>
           <p className="text-xs text-[var(--text-secondary)] opacity-60 mt-0.5">
-            Where top 10 PnL traders are positioned
+            Where top {top} PnL traders are positioned
           </p>
+        </div>
+        <div className="flex gap-1">
+          {TOP_OPTIONS.map((n) => (
+            <button
+              key={n}
+              onClick={() => setTop(n)}
+              className={`text-[10px] px-2 py-0.5 rounded-full transition-colors ${
+                top === n
+                  ? "bg-[var(--accent-blue)]/20 text-[var(--accent-blue)]"
+                  : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/5"
+              }`}
+            >
+              Top {n}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -119,7 +144,7 @@ export default function SmartMoney() {
                     {sentiment}
                   </span>
                   <span className="text-[10px] text-[var(--text-secondary)] font-mono">
-                    {m.smart_trader_count}/10
+                    {m.smart_trader_count}/{top}
                   </span>
                 </div>
               </motion.div>

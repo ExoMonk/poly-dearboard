@@ -107,8 +107,16 @@ export async function fetchMarketResolve(
   return res.json();
 }
 
-export async function fetchSmartMoney(): Promise<SmartMoneyResponse> {
-  const res = await fetch(`${BASE}/smart-money`);
+export async function fetchSmartMoney(params?: {
+  timeframe?: Timeframe;
+  top?: number;
+}): Promise<SmartMoneyResponse> {
+  const sp = new URLSearchParams();
+  if (params?.timeframe && params.timeframe !== "all")
+    sp.set("timeframe", params.timeframe);
+  if (params?.top) sp.set("top", String(params.top));
+  const qs = sp.toString();
+  const res = await fetch(`${BASE}/smart-money${qs ? `?${qs}` : ""}`);
   if (!res.ok) throw new Error(`Smart money fetch failed: ${res.status}`);
   return res.json();
 }

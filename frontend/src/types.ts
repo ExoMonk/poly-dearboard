@@ -134,6 +134,7 @@ export interface SmartMoneyMarket {
 
 export interface SmartMoneyResponse {
   markets: SmartMoneyMarket[];
+  top: number;
 }
 
 // Alerts (WebSocket)
