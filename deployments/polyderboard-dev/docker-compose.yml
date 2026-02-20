@@ -32,7 +32,7 @@ services:
     environment:
       ALCHEMY_API_KEY: ${ALCHEMY_API_KEY:-}
     volumes:
-      - ../../indexer/erpc_conf.yaml:/root/erpc_conf.yaml
+      - ../../indexer/erpc_conf.yaml:/root/erpc.yaml
     ports:
       - "4000:4000"    # eRPC proxy
       - "4001:4001"    # eRPC admin/metrics

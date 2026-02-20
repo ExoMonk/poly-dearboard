@@ -2,6 +2,10 @@
 -- Pre-creates rindexer raw event tables + normalized trades table + materialized views.
 -- rindexer's CREATE TABLE IF NOT EXISTS will safely skip tables that already exist.
 --
+-- IMPORTANT: uint256 fields MUST use UInt256 (not String) to match rindexer's
+-- generated schema. Unquoted large integer literals inserted into String columns
+-- go through Float64, losing precision (e.g. 76-digit token IDs → scientific notation).
+--
 -- NOTE: ClickHouse does NOT support UNION ALL in materialized views.
 -- Each MV has a single SELECT; multiple MVs write to the same target table.
 
@@ -17,11 +21,11 @@ CREATE TABLE IF NOT EXISTS poly_dearboard_ctf_exchange.order_filled (
     order_hash        String,
     maker             FixedString(42),
     taker             FixedString(42),
-    maker_asset_id    String,
-    taker_asset_id    String,
-    maker_amount_filled String,
-    taker_amount_filled String,
-    fee               String,
+    maker_asset_id    UInt256,
+    taker_asset_id    UInt256,
+    maker_amount_filled UInt256,
+    taker_amount_filled UInt256,
+    fee               UInt256,
     tx_hash           FixedString(66),
     block_number      UInt64,
     block_timestamp   Nullable(DateTime('UTC')),
@@ -46,11 +50,11 @@ CREATE TABLE IF NOT EXISTS poly_dearboard_neg_risk_ctf_exchange.order_filled (
     order_hash        String,
     maker             FixedString(42),
     taker             FixedString(42),
-    maker_asset_id    String,
-    taker_asset_id    String,
-    maker_amount_filled String,
-    taker_amount_filled String,
-    fee               String,
+    maker_asset_id    UInt256,
+    taker_asset_id    UInt256,
+    maker_amount_filled UInt256,
+    taker_amount_filled UInt256,
+    fee               UInt256,
     tx_hash           FixedString(66),
     block_number      UInt64,
     block_timestamp   Nullable(DateTime('UTC')),
@@ -161,71 +165,71 @@ ORDER BY (trader, block_number, tx_hash, log_index, side);
 
 -- ── CTF Exchange ─────────────────────────────────────────────────────────────
 
--- maker_asset_id == '0' → maker provides USDC → BUY
+-- maker_asset_id == 0 → maker provides USDC → BUY
 CREATE MATERIALIZED VIEW IF NOT EXISTS poly_dearboard.mv_ctf_buy
 TO poly_dearboard.trades
 AS SELECT
     'ctf' AS exchange,
     maker AS trader,
     'buy' AS side,
-    taker_asset_id AS asset_id,
+    toString(taker_asset_id) AS asset_id,
     toDecimal128(taker_amount_filled, 6) / 1000000 AS amount,
     round(toDecimal128(maker_amount_filled, 6) / toDecimal128(taker_amount_filled, 6), 10) AS price,
     toDecimal128(maker_amount_filled, 6) / 1000000 AS usdc_amount,
     toDecimal128('0', 6) AS fee,
     order_hash, tx_hash, block_number, block_timestamp, log_index, network
 FROM poly_dearboard_ctf_exchange.order_filled
-WHERE maker_asset_id = '0';
+WHERE maker_asset_id = 0;
 
--- taker_asset_id == '0' → maker provides tokens → SELL
+-- taker_asset_id == 0 → maker provides tokens → SELL
 CREATE MATERIALIZED VIEW IF NOT EXISTS poly_dearboard.mv_ctf_sell
 TO poly_dearboard.trades
 AS SELECT
     'ctf' AS exchange,
     maker AS trader,
     'sell' AS side,
-    maker_asset_id AS asset_id,
+    toString(maker_asset_id) AS asset_id,
     toDecimal128(maker_amount_filled, 6) / 1000000 AS amount,
     round(toDecimal128(taker_amount_filled, 6) / toDecimal128(maker_amount_filled, 6), 10) AS price,
     toDecimal128(taker_amount_filled, 6) / 1000000 AS usdc_amount,
     toDecimal128('0', 6) AS fee,
     order_hash, tx_hash, block_number, block_timestamp, log_index, network
 FROM poly_dearboard_ctf_exchange.order_filled
-WHERE taker_asset_id = '0';
+WHERE taker_asset_id = 0;
 
 -- ── NegRisk Exchange ─────────────────────────────────────────────────────────
 
--- maker_asset_id == '0' → maker provides USDC → BUY
+-- maker_asset_id == 0 → maker provides USDC → BUY
 CREATE MATERIALIZED VIEW IF NOT EXISTS poly_dearboard.mv_neg_risk_buy
 TO poly_dearboard.trades
 AS SELECT
     'neg_risk' AS exchange,
     maker AS trader,
     'buy' AS side,
-    taker_asset_id AS asset_id,
+    toString(taker_asset_id) AS asset_id,
     toDecimal128(taker_amount_filled, 6) / 1000000 AS amount,
     round(toDecimal128(maker_amount_filled, 6) / toDecimal128(taker_amount_filled, 6), 10) AS price,
     toDecimal128(maker_amount_filled, 6) / 1000000 AS usdc_amount,
     toDecimal128('0', 6) AS fee,
     order_hash, tx_hash, block_number, block_timestamp, log_index, network
 FROM poly_dearboard_neg_risk_ctf_exchange.order_filled
-WHERE maker_asset_id = '0';
+WHERE maker_asset_id = 0;
 
--- taker_asset_id == '0' → maker provides tokens → SELL
+-- taker_asset_id == 0 → maker provides tokens → SELL
 CREATE MATERIALIZED VIEW IF NOT EXISTS poly_dearboard.mv_neg_risk_sell
 TO poly_dearboard.trades
 AS SELECT
     'neg_risk' AS exchange,
     maker AS trader,
     'sell' AS side,
-    maker_asset_id AS asset_id,
+    toString(maker_asset_id) AS asset_id,
     toDecimal128(maker_amount_filled, 6) / 1000000 AS amount,
     round(toDecimal128(taker_amount_filled, 6) / toDecimal128(maker_amount_filled, 6), 10) AS price,
     toDecimal128(taker_amount_filled, 6) / 1000000 AS usdc_amount,
     toDecimal128('0', 6) AS fee,
     order_hash, tx_hash, block_number, block_timestamp, log_index, network
 FROM poly_dearboard_neg_risk_ctf_exchange.order_filled
-WHERE taker_asset_id = '0';
+WHERE taker_asset_id = 0;
 
 -- =============================================================================
 -- 4. Resolved prices: on-chain ConditionResolution → exact price per asset
