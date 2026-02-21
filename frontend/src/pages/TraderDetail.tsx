@@ -2,12 +2,12 @@ import { useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { motion } from "motion/react";
-import { fetchTrader, fetchTraderTrades, fetchTraderPositions, fetchPnlChart } from "../api";
-import type { OpenPosition, PnlTimeframe } from "../types";
+import { fetchTrader, fetchTraderTrades, fetchTraderPositions, fetchPnlChart, fetchTraderProfile } from "../api";
+import type { OpenPosition, PnlTimeframe, BehavioralLabel } from "../types";
 import Spinner from "../components/Spinner";
 import Pagination from "../components/Pagination";
 import PnlChart from "../charts/PnlChart";
-import { formatUsd, formatNumber, formatDate, formatTimestamp, shortenAddress, polygonscanAddress, polygonscanTx, polymarketAddress } from "../lib/format";
+import { formatUsd, formatNumber, formatDate, formatTimestamp, shortenAddress, polygonscanAddress, polygonscanTx, polymarketAddress, formatHoldTime } from "../lib/format";
 import { staggerContainer, statCardVariants, tapScale } from "../lib/motion";
 
 const PAGE_SIZE = 50;
@@ -42,6 +42,12 @@ export default function TraderDetail() {
   const { data: pnlChart } = useQuery({
     queryKey: ["pnlChart", address, pnlTimeframe],
     queryFn: () => fetchPnlChart(address!, pnlTimeframe),
+    enabled: !!address,
+  });
+
+  const { data: profile } = useQuery({
+    queryKey: ["trader-profile", address],
+    queryFn: () => fetchTraderProfile(address!),
     enabled: !!address,
   });
 
@@ -88,11 +94,18 @@ export default function TraderDetail() {
             Polymarket ↗
           </a>
         </div>
+        {profile && profile.labels.length > 0 && (
+          <div className="flex flex-wrap gap-2 mt-2">
+            {profile.labels.map((label) => (
+              <LabelBadge key={label} label={label} />
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Stats Cards */}
       <motion.div
-        className="grid grid-cols-2 md:grid-cols-3 gap-4"
+        className="grid grid-cols-2 md:grid-cols-4 gap-4"
         variants={staggerContainer}
         initial="initial"
         animate="animate"
@@ -101,9 +114,88 @@ export default function TraderDetail() {
         <StatCard label="Total Volume" value={formatUsd(trader.total_volume)} />
         <StatCard label="Trades" value={formatNumber(trader.trade_count)} />
         <StatCard label="Markets" value={formatNumber(trader.markets_traded)} />
-        <StatCard label="Total Fees" value={formatUsd(trader.total_fees)} />
-        <StatCard label="Active Since" value={formatDate(trader.first_trade)} />
+        {profile ? (
+          <>
+            <StatCard label="Avg Position" value={formatUsd(profile.avg_position_size)} />
+            <StatCard label="Avg Hold Time" value={formatHoldTime(profile.avg_hold_time_hours)} />
+            <StatCard
+              label="Biggest Win"
+              value={profile.biggest_win ? formatUsd(profile.biggest_win.pnl) : "—"}
+              glow={profile.biggest_win ? "green" : undefined}
+              subtitle={profile.biggest_win?.question}
+            />
+            <StatCard
+              label="Biggest Loss"
+              value={profile.biggest_loss ? formatUsd(profile.biggest_loss.pnl) : "—"}
+              glow={profile.biggest_loss ? "red" : undefined}
+              subtitle={profile.biggest_loss?.question}
+            />
+          </>
+        ) : (
+          <>
+            <StatCard label="Total Fees" value={formatUsd(trader.total_fees)} />
+            <StatCard label="Active Since" value={formatDate(trader.first_trade)} />
+          </>
+        )}
       </motion.div>
+
+      {/* Win Rate & Z-Score (if profile available with resolved positions) */}
+      {profile && profile.label_details.settled_count > 0 && (
+        <motion.div
+          className="grid grid-cols-2 md:grid-cols-4 gap-4"
+          variants={staggerContainer}
+          initial="initial"
+          animate="animate"
+        >
+          <StatCard
+            label="Win Rate"
+            value={`${profile.label_details.win_rate.toFixed(1)}%`}
+            glow={profile.label_details.win_rate > 55 ? "green" : profile.label_details.win_rate < 45 ? "red" : undefined}
+          />
+          <StatCard label="Z-Score" value={profile.label_details.z_score.toFixed(2)} />
+          <StatCard label="Settled" value={`${profile.label_details.settled_count} / ${profile.total_positions}`} />
+          <StatCard label="Active Span" value={formatHoldTime(profile.label_details.active_span_days * 24)} />
+        </motion.div>
+      )}
+
+      {/* Category Breakdown */}
+      {profile && profile.category_breakdown.length > 0 && (
+        <div>
+          <h2 className="text-lg font-bold gradient-text mb-4">Category Breakdown</h2>
+          <div className="glass p-4 space-y-3">
+            {profile.category_breakdown.map((cat) => {
+              const vol = parseFloat(cat.volume);
+              const totalVol = parseFloat(profile.label_details.total_volume);
+              const pct = totalVol > 0 ? (vol / totalVol) * 100 : 0;
+              const catPnl = parseFloat(cat.pnl);
+              return (
+                <div key={cat.category}>
+                  <div className="flex items-center justify-between text-sm mb-1">
+                    <span className="text-[var(--text-primary)] font-medium">{cat.category || "Unknown"}</span>
+                    <div className="flex items-center gap-4 text-xs">
+                      <span className="text-[var(--text-secondary)]">{cat.trade_count} trades</span>
+                      <span className="text-[var(--text-secondary)]">{formatUsd(cat.volume)}</span>
+                      <span className={catPnl >= 0 ? "glow-green" : "glow-red"}>{formatUsd(cat.pnl)}</span>
+                    </div>
+                  </div>
+                  <div className="w-full bg-[var(--bg-tertiary)] rounded-full h-2">
+                    <div
+                      className="h-2 rounded-full transition-all duration-500"
+                      style={{
+                        width: `${Math.min(pct, 100)}%`,
+                        background: catPnl >= 0
+                          ? "var(--neon-green)"
+                          : "var(--neon-red)",
+                        opacity: 0.7,
+                      }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* PnL Chart */}
       {pnlChart && (
@@ -261,7 +353,7 @@ function PositionsTable({ positions }: { positions: OpenPosition[] }) {
               const positionPnl = parseFloat(p.pnl);
               return (
                 <motion.tr
-                  key={p.asset_id}
+                  key={`${p.asset_id}-${i}`}
                   initial={{ opacity: 0, x: -8 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ duration: 0.25, delay: i * 0.02 }}
@@ -320,7 +412,7 @@ function PositionsTable({ positions }: { positions: OpenPosition[] }) {
   );
 }
 
-function StatCard({ label, value, glow }: { label: string; value: string; glow?: "green" | "red" }) {
+function StatCard({ label, value, glow, subtitle }: { label: string; value: string; glow?: "green" | "red"; subtitle?: string }) {
   const borderColor = glow === "green"
     ? "border-[var(--neon-green)]/20 shadow-[0_0_12px_rgba(0,255,136,0.08)]"
     : glow === "red"
@@ -337,6 +429,28 @@ function StatCard({ label, value, glow }: { label: string; value: string; glow?:
     <motion.div variants={statCardVariants} className={`glass p-4 gradient-border-top ${borderColor}`}>
       <div className="text-xs text-[var(--text-secondary)] mb-2 uppercase tracking-wider">{label}</div>
       <div className={`text-xl font-bold font-mono ${valueClass}`}>{value}</div>
+      {subtitle && (
+        <div className="text-xs text-[var(--text-secondary)] mt-1 truncate" title={subtitle}>{subtitle}</div>
+      )}
     </motion.div>
+  );
+}
+
+const LABEL_STYLES: Record<BehavioralLabel, { text: string; bg: string; border: string; glow: string }> = {
+  sharp: { text: "Sharp", bg: "bg-emerald-500/10", border: "border-emerald-500/30", glow: "shadow-[0_0_8px_rgba(16,185,129,0.2)]" },
+  specialist: { text: "Specialist", bg: "bg-cyan-500/10", border: "border-cyan-500/30", glow: "shadow-[0_0_8px_rgba(6,182,212,0.2)]" },
+  whale: { text: "Whale", bg: "bg-blue-500/10", border: "border-blue-500/30", glow: "shadow-[0_0_8px_rgba(59,130,246,0.2)]" },
+  degen: { text: "Degen", bg: "bg-orange-500/10", border: "border-orange-500/30", glow: "shadow-[0_0_8px_rgba(249,115,22,0.2)]" },
+  market_maker: { text: "Market Maker", bg: "bg-purple-500/10", border: "border-purple-500/30", glow: "shadow-[0_0_8px_rgba(168,85,247,0.2)]" },
+  bot: { text: "Bot", bg: "bg-yellow-500/10", border: "border-yellow-500/30", glow: "shadow-[0_0_8px_rgba(234,179,8,0.2)]" },
+  casual: { text: "Casual", bg: "bg-gray-500/10", border: "border-gray-500/30", glow: "" },
+};
+
+function LabelBadge({ label }: { label: BehavioralLabel }) {
+  const style = LABEL_STYLES[label];
+  return (
+    <span className={`text-xs font-bold px-3 py-1 rounded-full border ${style.bg} ${style.border} ${style.glow}`}>
+      {style.text}
+    </span>
   );
 }

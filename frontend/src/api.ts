@@ -9,6 +9,7 @@ import type {
   PnlChartResponse,
   ResolvedMarket,
   SmartMoneyResponse,
+  TraderProfile,
   SortColumn,
   SortOrder,
   Timeframe,
@@ -104,6 +105,12 @@ export async function fetchMarketResolve(
   const sp = new URLSearchParams({ token_ids: tokenIds });
   const res = await fetch(`${BASE}/market/resolve?${sp}`);
   if (!res.ok) throw new Error(`Market resolve failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchTraderProfile(address: string): Promise<TraderProfile> {
+  const res = await fetch(`${BASE}/trader/${address}/profile`);
+  if (!res.ok) throw new Error(`Profile fetch failed: ${res.status}`);
   return res.json();
 }
 

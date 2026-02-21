@@ -139,6 +139,59 @@ export interface SmartMoneyResponse {
   top: number;
 }
 
+// Trader Profile
+
+export type BehavioralLabel =
+  | "sharp"
+  | "specialist"
+  | "whale"
+  | "degen"
+  | "market_maker"
+  | "bot"
+  | "casual";
+
+export interface PositionHighlight {
+  asset_id: string;
+  question: string;
+  outcome: string;
+  pnl: string;
+}
+
+export interface CategoryStats {
+  category: string;
+  volume: string;
+  trade_count: number;
+  pnl: string;
+}
+
+export interface LabelDetails {
+  win_rate: number;
+  z_score: number;
+  settled_count: number;
+  dominant_category: string;
+  dominant_category_pct: number;
+  category_win_rate: number;
+  total_volume: string;
+  avg_position_size_usd: string;
+  unique_markets: number;
+  total_trade_count: number;
+  active_span_days: number;
+  buy_sell_ratio: number;
+  trades_per_market: number;
+}
+
+export interface TraderProfile {
+  avg_position_size: string;
+  avg_hold_time_hours: number;
+  biggest_win: PositionHighlight | null;
+  biggest_loss: PositionHighlight | null;
+  category_breakdown: CategoryStats[];
+  total_positions: number;
+  resolved_positions: number;
+  labels: BehavioralLabel[];
+  label_details: LabelDetails;
+}
+
 // Alerts (WebSocket)
 
 export interface WhaleTradeAlert {

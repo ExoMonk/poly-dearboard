@@ -68,3 +68,11 @@ export function polygonscanTx(hash: string): string {
 export function polymarketAddress(addr: string): string {
   return `https://polymarket.com/${addr}`;
 }
+
+export function formatHoldTime(hours: number): string {
+  if (hours < 1) return "<1h";
+  const days = Math.floor(hours / 24);
+  const rem = Math.round(hours % 24);
+  if (days === 0) return `${rem}h`;
+  return rem > 0 ? `${days}d ${rem}h` : `${days}d`;
+}
