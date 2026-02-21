@@ -1,15 +1,17 @@
 use clickhouse::Row;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct LeaderboardResponse {
     pub traders: Vec<TraderSummary>,
     pub total: u64,
     pub limit: u32,
     pub offset: u32,
+    pub labels: std::collections::HashMap<String, Vec<BehavioralLabel>>,
+    pub label_details: std::collections::HashMap<String, LabelDetails>,
 }
 
-#[derive(Row, Deserialize, Serialize)]
+#[derive(Row, Deserialize, Serialize, Clone)]
 pub struct TraderSummary {
     pub address: String,
     pub total_volume: String,
@@ -292,6 +294,25 @@ pub struct ProfilePositionRow {
     pub latest_price: String,
     pub buy_usdc: String,
     pub sell_usdc: String,
+    pub buy_amount: String,
+}
+
+#[derive(Row, Deserialize)]
+pub struct BatchPositionRow {
+    pub trader: String,
+    pub asset_id: String,
+    pub pnl: String,
+    pub total_volume: String,
+    pub trade_count: u64,
+    pub net_tokens: String,
+    pub first_ts: String,
+    pub last_ts: String,
+    pub resolved_price: String,
+    pub on_chain_resolved: u8,
+    pub latest_price: String,
+    pub buy_usdc: String,
+    pub sell_usdc: String,
+    pub buy_amount: String,
 }
 
 #[derive(Serialize)]
@@ -333,9 +354,10 @@ pub enum BehavioralLabel {
     MarketMaker,
     Bot,
     Casual,
+    Contrarian,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct LabelDetails {
     pub win_rate: f64,
     pub z_score: f64,
@@ -350,6 +372,9 @@ pub struct LabelDetails {
     pub active_span_days: f64,
     pub buy_sell_ratio: f64,
     pub trades_per_market: f64,
+    pub contrarian_trades: u64,
+    pub contrarian_correct: u64,
+    pub contrarian_rate: f64,
 }
 
 // -- Smart Money Signal --

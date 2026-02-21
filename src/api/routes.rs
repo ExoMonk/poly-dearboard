@@ -29,6 +29,75 @@ fn exclude_clause() -> String {
         .join(",")
 }
 
+/// Background cache warmer — runs the default leaderboard query and populates the cache.
+pub async fn warm_leaderboard(state: &AppState) -> Result<(), String> {
+    let sort = "realized_pnl";
+    let order = "desc";
+    let limit: u32 = 25;
+    let offset: u32 = 0;
+    let timeframe = "all";
+    let cache_key = format!("{sort}:{order}:{limit}:{offset}:{timeframe}");
+
+    let exclude = exclude_clause();
+    let sort_expr = "sum((p.sell_usdc - p.buy_usdc) + (p.buy_amount - p.sell_amount) * coalesce(rp.resolved_price, toFloat64(lp.latest_price)))";
+
+    let query = format!(
+        "WITH resolved AS (
+            SELECT asset_id, toNullable(toFloat64(resolved_price)) AS resolved_price
+            FROM poly_dearboard.resolved_prices FINAL
+        )
+        SELECT
+            toString(p.trader) AS address,
+            toString(sum(p.total_volume)) AS total_volume,
+            sum(p.trade_count) AS trade_count,
+            count() AS markets_traded,
+            toString(ROUND(sum((p.sell_usdc - p.buy_usdc) + (p.buy_amount - p.sell_amount) * coalesce(rp.resolved_price, toFloat64(lp.latest_price))), 6)) AS realized_pnl,
+            toString(sum(p.total_fee)) AS total_fees,
+            ifNull(toString(min(p.first_ts)), '') AS first_trade,
+            ifNull(toString(max(p.last_ts)), '') AS last_trade
+        FROM poly_dearboard.trader_positions p
+        LEFT JOIN (SELECT asset_id, latest_price FROM poly_dearboard.asset_latest_price FINAL) AS lp ON p.asset_id = lp.asset_id
+        LEFT JOIN resolved rp ON p.asset_id = rp.asset_id
+        WHERE p.trader NOT IN ({exclude})
+        GROUP BY p.trader
+        ORDER BY {sort_expr} {order}
+        LIMIT ? OFFSET ?"
+    );
+
+    let traders = state.db.query(&query)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all::<TraderSummary>()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let total: u64 = state.db
+        .query("SELECT uniqExactMerge(unique_traders) FROM poly_dearboard.global_stats")
+        .fetch_one()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let addresses: Vec<String> = traders.iter().map(|t| t.address.to_lowercase()).collect();
+    let (labels, label_details) = match tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        batch_compute_labels(state, &addresses),
+    ).await {
+        Ok(pair) => pair,
+        Err(_) => (std::collections::HashMap::new(), std::collections::HashMap::new()),
+    };
+
+    let response = LeaderboardResponse { traders, total, limit, offset, labels, label_details };
+
+    let mut cache = state.leaderboard_cache.write().await;
+    cache.insert(cache_key, super::server::CachedResponse {
+        data: response,
+        expires: std::time::Instant::now() + std::time::Duration::from_secs(30),
+    });
+
+    tracing::debug!("leaderboard cache warmed");
+    Ok(())
+}
+
 pub async fn leaderboard(
     State(state): State<AppState>,
     Query(params): Query<LeaderboardParams>,
@@ -38,6 +107,18 @@ pub async fn leaderboard(
     let limit = params.limit.unwrap_or(100).min(500);
     let offset = params.offset.unwrap_or(0);
     let timeframe = params.timeframe.as_deref().unwrap_or("all");
+
+    // Check cache (30s TTL)
+    let cache_key = format!("{sort}:{order}:{limit}:{offset}:{timeframe}");
+    {
+        let cache = state.leaderboard_cache.read().await;
+        if let Some(entry) = cache.get(&cache_key) {
+            if entry.expires > std::time::Instant::now() {
+                tracing::info!("leaderboard: cache hit ({cache_key})");
+                return Ok(Json(entry.data.clone()));
+            }
+        }
+    }
 
     if !ALLOWED_SORT_COLUMNS.contains(&sort) {
         return Err((
@@ -176,12 +257,43 @@ pub async fn leaderboard(
         (traders, total)
     };
 
-    Ok(Json(LeaderboardResponse {
+    // Batch-compute labels for the current page of traders (with timeout)
+    let addresses: Vec<String> = traders.iter().map(|t| t.address.to_lowercase()).collect();
+    let (labels, label_details) = match tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        batch_compute_labels(&state, &addresses),
+    )
+    .await
+    {
+        Ok(pair) => pair,
+        Err(_) => {
+            tracing::warn!("batch_compute_labels timed out after 2s");
+            (std::collections::HashMap::new(), std::collections::HashMap::new())
+        }
+    };
+
+    let response = LeaderboardResponse {
         traders,
         total,
         limit,
         offset,
-    }))
+        labels,
+        label_details,
+    };
+
+    // Cache for 30 seconds
+    {
+        let mut cache = state.leaderboard_cache.write().await;
+        cache.insert(
+            cache_key,
+            super::server::CachedResponse {
+                data: response.clone(),
+                expires: std::time::Instant::now() + std::time::Duration::from_secs(30),
+            },
+        );
+    }
+
+    Ok(Json(response))
 }
 
 pub async fn trader_stats(
@@ -1185,7 +1297,8 @@ pub async fn trader_profile(
                 if(rp.resolved_price IS NOT NULL, 1, 0) AS on_chain_resolved,
                 toString(coalesce(toFloat64(lp.latest_price), 0)) AS latest_price,
                 toString(tp.buy_usdc) AS buy_usdc,
-                toString(tp.sell_usdc) AS sell_usdc
+                toString(tp.sell_usdc) AS sell_usdc,
+                toString(tp.buy_amount) AS buy_amount
             FROM poly_dearboard.trader_positions tp FINAL
             LEFT JOIN (SELECT asset_id, latest_price FROM poly_dearboard.asset_latest_price FINAL) lp
                 ON tp.asset_id = lp.asset_id
@@ -1318,6 +1431,197 @@ pub async fn trader_profile(
         labels,
         label_details,
     }))
+}
+
+/// Batch-compute labels for a list of traders (used by leaderboard).
+/// Returns empty map on error — leaderboard still works without labels.
+async fn batch_compute_labels(
+    state: &AppState,
+    addresses: &[String],
+) -> (std::collections::HashMap<String, Vec<BehavioralLabel>>, std::collections::HashMap<String, LabelDetails>) {
+    let mut result = std::collections::HashMap::new();
+    let mut details_map = std::collections::HashMap::new();
+    if addresses.is_empty() {
+        return (result, details_map);
+    }
+
+    let in_list = addresses
+        .iter()
+        .map(|a| format!("'{}'", a.replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(",");
+
+    let t0 = std::time::Instant::now();
+    let positions: Vec<BatchPositionRow> = match state
+        .db
+        .query(&format!(
+            "WITH resolved AS (
+                SELECT asset_id, toNullable(toFloat64(resolved_price)) AS resolved_price
+                FROM poly_dearboard.resolved_prices FINAL
+            ),
+            filtered AS (
+                SELECT trader, asset_id,
+                       sum(buy_usdc) AS buy_usdc, sum(sell_usdc) AS sell_usdc,
+                       sum(buy_amount) AS buy_amount, sum(sell_amount) AS sell_amount,
+                       sum(total_volume) AS total_volume, sum(trade_count) AS trade_count,
+                       min(first_ts) AS first_ts, max(last_ts) AS last_ts
+                FROM poly_dearboard.trader_positions
+                WHERE lower(trader) IN ({in_list})
+                GROUP BY trader, asset_id
+            )
+            SELECT
+                toString(tp.trader) AS trader,
+                tp.asset_id,
+                toString(ROUND((tp.sell_usdc - tp.buy_usdc)
+                    + (tp.buy_amount - tp.sell_amount)
+                    * coalesce(rp.resolved_price, toFloat64(lp.latest_price)), 6)) AS pnl,
+                toString(tp.total_volume) AS total_volume,
+                tp.trade_count,
+                toString(tp.buy_amount - tp.sell_amount) AS net_tokens,
+                ifNull(toString(tp.first_ts), '') AS first_ts,
+                ifNull(toString(tp.last_ts), '') AS last_ts,
+                ifNull(toString(rp.resolved_price), '') AS resolved_price,
+                if(rp.resolved_price IS NOT NULL, 1, 0) AS on_chain_resolved,
+                toString(coalesce(toFloat64(lp.latest_price), 0)) AS latest_price,
+                toString(tp.buy_usdc) AS buy_usdc,
+                toString(tp.sell_usdc) AS sell_usdc,
+                toString(tp.buy_amount) AS buy_amount
+            FROM filtered tp
+            LEFT JOIN (SELECT asset_id, latest_price FROM poly_dearboard.asset_latest_price FINAL) lp
+                ON tp.asset_id = lp.asset_id
+            LEFT JOIN resolved rp ON tp.asset_id = rp.asset_id"
+        ))
+        .fetch_all()
+        .await
+    {
+        Ok(rows) => {
+            tracing::debug!("batch labels: CH query returned {} rows in {:?}", rows.len(), t0.elapsed());
+            rows
+        }
+        Err(e) => {
+            tracing::warn!("Failed to batch-query positions for labels: {e}");
+            return (result, details_map);
+        }
+    };
+
+    // Cache-only market info lookup (no Gamma API calls — leaderboard must stay fast)
+    let market_info: std::collections::HashMap<String, markets::MarketInfo> = {
+        let cache = state.market_cache.read().await;
+        let mut info = std::collections::HashMap::new();
+        for p in &positions {
+            let key = markets::cache_key(&p.asset_id);
+            if let Some(m) = cache.get(&key) {
+                info.insert(p.asset_id.clone(), m.clone());
+            }
+        }
+        info
+    };
+
+    // Group positions by trader
+    let mut by_trader: std::collections::HashMap<String, Vec<ProfilePositionRow>> =
+        std::collections::HashMap::new();
+    for p in positions {
+        by_trader
+            .entry(p.trader.to_lowercase())
+            .or_default()
+            .push(ProfilePositionRow {
+                asset_id: p.asset_id,
+                pnl: p.pnl,
+                total_volume: p.total_volume,
+                trade_count: p.trade_count,
+                net_tokens: p.net_tokens,
+                first_ts: p.first_ts,
+                last_ts: p.last_ts,
+                resolved_price: p.resolved_price,
+                on_chain_resolved: p.on_chain_resolved,
+                latest_price: p.latest_price,
+                buy_usdc: p.buy_usdc,
+                sell_usdc: p.sell_usdc,
+                buy_amount: p.buy_amount,
+            });
+    }
+
+    // Compute labels per trader
+    for (addr, positions) in &by_trader {
+        let mut cat_map: std::collections::HashMap<String, (f64, u64, f64)> =
+            std::collections::HashMap::new();
+        let mut total_volume: f64 = 0.0;
+        let mut total_trade_count: u64 = 0;
+        let mut earliest_ts: Option<&str> = None;
+        let mut latest_ts: Option<&str> = None;
+
+        for p in positions {
+            let category = market_info
+                .get(&p.asset_id)
+                .map(|i| i.category.clone())
+                .unwrap_or_else(|| "Unknown".to_string());
+            let vol: f64 = p.total_volume.parse().unwrap_or(0.0);
+            let pnl: f64 = p.pnl.parse().unwrap_or(0.0);
+            let entry = cat_map.entry(category).or_insert((0.0, 0, 0.0));
+            entry.0 += vol;
+            entry.1 += p.trade_count;
+            entry.2 += pnl;
+            total_volume += vol;
+            total_trade_count += p.trade_count;
+
+            if !p.first_ts.is_empty() {
+                if earliest_ts.map(|e| p.first_ts.as_str() < e).unwrap_or(true) {
+                    earliest_ts = Some(&p.first_ts);
+                }
+            }
+            if !p.last_ts.is_empty() {
+                if latest_ts.map(|l| p.last_ts.as_str() > l).unwrap_or(true) {
+                    latest_ts = Some(&p.last_ts);
+                }
+            }
+        }
+
+        let mut category_breakdown: Vec<CategoryStats> = cat_map
+            .into_iter()
+            .map(|(cat, (vol, tc, pnl))| CategoryStats {
+                category: cat,
+                volume: format!("{:.6}", vol),
+                trade_count: tc,
+                pnl: format!("{:.6}", pnl),
+            })
+            .collect();
+        category_breakdown.sort_by(|a, b| {
+            let va: f64 = a.volume.parse().unwrap_or(0.0);
+            let vb: f64 = b.volume.parse().unwrap_or(0.0);
+            vb.partial_cmp(&va).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let active_span_days = match (earliest_ts, latest_ts) {
+            (Some(e), Some(l)) => {
+                let early = chrono::NaiveDateTime::parse_from_str(e, "%Y-%m-%d %H:%M:%S")
+                    .or_else(|_| chrono::NaiveDateTime::parse_from_str(e, "%Y-%m-%dT%H:%M:%S"));
+                let late = chrono::NaiveDateTime::parse_from_str(l, "%Y-%m-%d %H:%M:%S")
+                    .or_else(|_| chrono::NaiveDateTime::parse_from_str(l, "%Y-%m-%dT%H:%M:%S"));
+                match (early, late) {
+                    (Ok(e), Ok(l)) => (l - e).num_hours() as f64 / 24.0,
+                    _ => 0.0,
+                }
+            }
+            _ => 0.0,
+        };
+
+        let (labels, details) = compute_labels(
+            positions,
+            &market_info,
+            &category_breakdown,
+            total_volume,
+            total_trade_count,
+            positions.len() as u64,
+            active_span_days,
+        );
+
+        if !labels.is_empty() {
+            result.insert(addr.clone(), labels);
+            details_map.insert(addr.clone(), details);
+        }
+    }
+
+    (result, details_map)
 }
 
 fn compute_labels(
@@ -1502,6 +1806,48 @@ fn compute_labels(
         labels.push(BehavioralLabel::Bot);
     }
 
+    // Contrarian: buys cheap (unpopular) outcomes that settle correctly
+    let mut contrarian_trades: u64 = 0;
+    let mut contrarian_correct: u64 = 0;
+    for p in positions {
+        let net: f64 = p.net_tokens.parse().unwrap_or(0.0);
+        if net <= 0.0 {
+            continue;
+        }
+        let lp: f64 = p.latest_price.parse().unwrap_or(0.5);
+        let is_settled = p.on_chain_resolved == 1 || lp >= 0.95 || lp <= 0.05;
+        if !is_settled {
+            continue;
+        }
+        let buy_amt: f64 = p.buy_amount.parse().unwrap_or(0.0);
+        if buy_amt < 1e-9 {
+            continue;
+        }
+        let buy_usd: f64 = p.buy_usdc.parse().unwrap_or(0.0);
+        let avg_cost = buy_usd / buy_amt;
+        if avg_cost < 0.30 {
+            contrarian_trades += 1;
+            let effective_price: f64 = if p.on_chain_resolved == 1 {
+                p.resolved_price.parse().unwrap_or(0.5)
+            } else if lp >= 0.95 {
+                1.0
+            } else {
+                0.0
+            };
+            if effective_price > 0.5 {
+                contrarian_correct += 1;
+            }
+        }
+    }
+    let contrarian_rate = if contrarian_trades > 0 {
+        (contrarian_correct as f64 / contrarian_trades as f64) * 100.0
+    } else {
+        0.0
+    };
+    if contrarian_trades >= 5 && contrarian_rate >= 60.0 {
+        labels.push(BehavioralLabel::Contrarian);
+    }
+
     // Casual: small/infrequent
     if total_trade_count < 10 || total_volume < 500.0 {
         labels.push(BehavioralLabel::Casual);
@@ -1521,6 +1867,9 @@ fn compute_labels(
         active_span_days,
         buy_sell_ratio,
         trades_per_market,
+        contrarian_trades,
+        contrarian_correct,
+        contrarian_rate,
     };
 
     (labels, details)

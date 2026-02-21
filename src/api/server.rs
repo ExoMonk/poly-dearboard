@@ -1,8 +1,18 @@
 use axum::{routing::{get, post}, Router};
-use tokio::sync::broadcast;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::{broadcast, RwLock};
 use tower_http::cors::{Any, CorsLayer};
 
-use super::{alerts, markets, routes, scanner};
+use super::{alerts, markets, routes, scanner, types::LeaderboardResponse};
+
+/// Cached leaderboard response with expiry.
+pub struct CachedResponse {
+    pub data: LeaderboardResponse,
+    pub expires: std::time::Instant,
+}
+
+pub type LeaderboardCache = Arc<RwLock<HashMap<String, CachedResponse>>>;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -11,6 +21,7 @@ pub struct AppState {
     pub market_cache: markets::MarketCache,
     pub alert_tx: broadcast::Sender<alerts::Alert>,
     pub trade_tx: broadcast::Sender<alerts::LiveTrade>,
+    pub leaderboard_cache: LeaderboardCache,
 }
 
 pub async fn run(client: clickhouse::Client, port: u16) {
@@ -28,6 +39,7 @@ pub async fn run(client: clickhouse::Client, port: u16) {
         market_cache: markets::new_cache(),
         alert_tx,
         trade_tx,
+        leaderboard_cache: Arc::new(RwLock::new(HashMap::new())),
     };
 
     // Pre-warm the market name cache in the background, then refresh periodically
@@ -46,6 +58,19 @@ pub async fn run(client: clickhouse::Client, port: u16) {
                 tracing::info!("Refreshing market cache...");
                 markets::warm_cache(&http, &db, &cache).await;
                 markets::populate_resolved_prices(&db, &cache).await;
+            }
+        });
+    }
+
+    // Background leaderboard cache warmer — keeps the default view always warm
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            // Wait for market cache to warm first
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            loop {
+                let _ = routes::warm_leaderboard(&state).await;
+                tokio::time::sleep(std::time::Duration::from_secs(25)).await;
             }
         });
     }
