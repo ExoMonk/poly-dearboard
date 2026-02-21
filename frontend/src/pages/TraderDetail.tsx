@@ -3,11 +3,13 @@ import { useParams, Link, useNavigate } from "react-router-dom";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { motion } from "motion/react";
 import { fetchTrader, fetchTraderTrades, fetchTraderPositions, fetchPnlChart, fetchTraderProfile } from "../api";
-import type { OpenPosition, PnlTimeframe, BehavioralLabel } from "../types";
+import type { OpenPosition, PnlTimeframe } from "../types";
 import Spinner from "../components/Spinner";
 import Pagination from "../components/Pagination";
+import LabelBadge from "../components/LabelBadge";
 import PnlChart from "../charts/PnlChart";
 import { formatUsd, formatNumber, formatDate, formatTimestamp, shortenAddress, polygonscanAddress, polygonscanTx, polymarketAddress, formatHoldTime } from "../lib/format";
+import { labelTooltip } from "../lib/labels";
 import { staggerContainer, statCardVariants, tapScale } from "../lib/motion";
 
 const PAGE_SIZE = 50;
@@ -97,7 +99,7 @@ export default function TraderDetail() {
         {profile && profile.labels.length > 0 && (
           <div className="flex flex-wrap gap-2 mt-2">
             {profile.labels.map((label) => (
-              <LabelBadge key={label} label={label} />
+              <LabelBadge key={label} label={label} tooltip={labelTooltip(label, profile.label_details)} />
             ))}
           </div>
         )}
@@ -436,21 +438,3 @@ function StatCard({ label, value, glow, subtitle }: { label: string; value: stri
   );
 }
 
-const LABEL_STYLES: Record<BehavioralLabel, { text: string; bg: string; border: string; glow: string }> = {
-  sharp: { text: "Sharp", bg: "bg-emerald-500/10", border: "border-emerald-500/30", glow: "shadow-[0_0_8px_rgba(16,185,129,0.2)]" },
-  specialist: { text: "Specialist", bg: "bg-cyan-500/10", border: "border-cyan-500/30", glow: "shadow-[0_0_8px_rgba(6,182,212,0.2)]" },
-  whale: { text: "Whale", bg: "bg-blue-500/10", border: "border-blue-500/30", glow: "shadow-[0_0_8px_rgba(59,130,246,0.2)]" },
-  degen: { text: "Degen", bg: "bg-orange-500/10", border: "border-orange-500/30", glow: "shadow-[0_0_8px_rgba(249,115,22,0.2)]" },
-  market_maker: { text: "Market Maker", bg: "bg-purple-500/10", border: "border-purple-500/30", glow: "shadow-[0_0_8px_rgba(168,85,247,0.2)]" },
-  bot: { text: "Bot", bg: "bg-yellow-500/10", border: "border-yellow-500/30", glow: "shadow-[0_0_8px_rgba(234,179,8,0.2)]" },
-  casual: { text: "Casual", bg: "bg-gray-500/10", border: "border-gray-500/30", glow: "" },
-};
-
-function LabelBadge({ label }: { label: BehavioralLabel }) {
-  const style = LABEL_STYLES[label];
-  return (
-    <span className={`text-xs font-bold px-3 py-1 rounded-full border ${style.bg} ${style.border} ${style.glow}`}>
-      {style.text}
-    </span>
-  );
-}

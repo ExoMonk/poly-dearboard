@@ -14,6 +14,8 @@ export interface LeaderboardResponse {
   total: number;
   limit: number;
   offset: number;
+  labels: Record<string, BehavioralLabel[]>;
+  label_details: Record<string, LabelDetails>;
 }
 
 export interface TradeRecord {
@@ -148,7 +150,8 @@ export type BehavioralLabel =
   | "degen"
   | "market_maker"
   | "bot"
-  | "casual";
+  | "casual"
+  | "contrarian";
 
 export interface PositionHighlight {
   asset_id: string;
@@ -178,6 +181,9 @@ export interface LabelDetails {
   active_span_days: number;
   buy_sell_ratio: number;
   trades_per_market: number;
+  contrarian_trades: number;
+  contrarian_correct: number;
+  contrarian_rate: number;
 }
 
 export interface TraderProfile {

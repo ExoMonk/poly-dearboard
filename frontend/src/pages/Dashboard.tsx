@@ -7,6 +7,8 @@ import Spinner from "../components/Spinner";
 import Pagination from "../components/Pagination";
 import AddressCell from "../components/AddressCell";
 import SortHeader from "../components/SortHeader";
+import LabelBadge from "../components/LabelBadge";
+import { labelTooltip } from "../lib/labels";
 import SmartMoney from "../charts/SmartMoney";
 import { formatUsd, formatNumber, formatDate, timeAgo } from "../lib/format";
 import { tapScale } from "../lib/motion";
@@ -89,6 +91,7 @@ export default function Dashboard() {
               <tr className="border-b border-[var(--border-glow)] text-[var(--text-secondary)] text-xs uppercase tracking-widest">
                 <th className="px-4 py-3 text-left w-14">#</th>
                 <th className="px-4 py-3 text-left">Trader</th>
+                <th className="px-4 py-3 text-left hidden md:table-cell">Labels</th>
                 <SortHeader label="PnL" column="realized_pnl" currentSort={sort} currentOrder={order} onSort={handleSort} />
                 <SortHeader label="Volume" column="total_volume" currentSort={sort} currentOrder={order} onSort={handleSort} />
                 <SortHeader label="Trades" column="trade_count" currentSort={sort} currentOrder={order} onSort={handleSort} />
@@ -112,6 +115,21 @@ export default function Dashboard() {
                     <td className={`px-4 py-3 font-mono text-sm ${rankClass(rank)}`}>{rank}</td>
                     <td className="px-4 py-3">
                       <AddressCell address={t.address} />
+                    </td>
+                    <td className="px-4 py-3 hidden md:table-cell">
+                      <div className="flex flex-wrap gap-1">
+                        {(data.labels[t.address.toLowerCase()] || []).map((label) => {
+                          const details = data.label_details[t.address.toLowerCase()];
+                          return (
+                            <LabelBadge
+                              key={label}
+                              label={label}
+                              size="sm"
+                              tooltip={details ? labelTooltip(label, details) : undefined}
+                            />
+                          );
+                        })}
+                      </div>
                     </td>
                     <td className={`px-4 py-3 text-right font-mono ${pnl >= 0 ? "glow-green" : "glow-red"}`}>
                       {formatUsd(t.realized_pnl)}
