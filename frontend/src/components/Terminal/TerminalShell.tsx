@@ -5,6 +5,7 @@ import { TerminalHeader } from "./TerminalHeader";
 import { TerminalSidebar } from "./TerminalSidebar";
 import { TerminalLogs } from "./TerminalLogs";
 import { TerminalStatusBar } from "./TerminalStatusBar";
+import { WalletTab } from "./WalletTab";
 
 const HEIGHT_MAP = {
   collapsed: 40,
@@ -38,9 +39,7 @@ export function TerminalShell() {
       case "logs":
         return <TerminalLogs />;
       case "wallet":
-        return (
-          <StubContent message="No trading wallet configured. Set up a wallet to start copy-trading." />
-        );
+        return <WalletTab />;
       case "sessions":
         return (
           <StubContent message="No active sessions. Start a copy-trade from the Signal Feed." />

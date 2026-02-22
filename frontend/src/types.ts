@@ -400,6 +400,36 @@ export interface LagMessage {
 
 export type SignalMessage = SignalTrade | ConvergenceAlert | LagMessage;
 
+// Trading Wallet (spec 13)
+
+export interface TradingWalletInfo {
+  id: string;
+  address: string;
+  proxy_address: string | null;
+  status: "created" | "credentialed" | "active" | "disabled";
+  has_clob_credentials: boolean;
+  created_at: string;
+}
+
+export interface WalletGenerateResponse {
+  id: string;
+  address: string;
+  private_key: string;
+  proxy_address: string;
+}
+
+export interface ImportWalletResponse {
+  id: string;
+  address: string;
+  proxy_address: string;
+}
+
+export interface DeriveCredentialsResponse {
+  success: boolean;
+  wallet_id: string;
+  api_key: string;
+}
+
 // Terminal Shell (spec 12)
 export interface LogEntry {
   id: string;

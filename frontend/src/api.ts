@@ -15,6 +15,10 @@ import type {
   CopyPortfolioResponse,
   TraderList,
   TraderListDetail,
+  TradingWalletInfo,
+  WalletGenerateResponse,
+  ImportWalletResponse,
+  DeriveCredentialsResponse,
   SortColumn,
   SortOrder,
   Timeframe,
@@ -266,4 +270,46 @@ export async function removeListMembers(id: string, addresses: string[]): Promis
     body: JSON.stringify({ addresses }),
   });
   if (!res.ok) throw new Error(`Remove members failed: ${res.status}`);
+}
+
+// -- Trading Wallets (multi-wallet, up to 3 per user) --
+
+export async function fetchWallets(): Promise<TradingWalletInfo[]> {
+  const res = await authFetch(`${BASE}/wallets`);
+  if (!res.ok) throw new Error(`Wallets fetch failed: ${res.status}`);
+  return res.json();
+}
+
+export async function generateWallet(): Promise<WalletGenerateResponse> {
+  const res = await authFetch(`${BASE}/wallets/generate`, { method: "POST" });
+  if (!res.ok) throw new Error(`Wallet generate failed: ${res.status}`);
+  return res.json();
+}
+
+export async function importWallet(privateKey: string): Promise<ImportWalletResponse> {
+  const res = await authFetch(`${BASE}/wallets/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ private_key: privateKey }),
+  });
+  if (!res.ok) throw new Error(`Wallet import failed: ${res.status}`);
+  return res.json();
+}
+
+export async function deriveCredentials(walletId: string): Promise<DeriveCredentialsResponse> {
+  const res = await authFetch(`${BASE}/wallets/${walletId}/derive-credentials`, { method: "POST" });
+  if (!res.ok) throw new Error(`Derive credentials failed: ${res.status}`);
+  return res.json();
+}
+
+export async function deleteWallet(walletId: string): Promise<void> {
+  const res = await authFetch(`${BASE}/wallets/${walletId}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`Delete wallet failed: ${res.status}`);
+}
+
+export class NotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NotFoundError";
+  }
 }
