@@ -21,9 +21,73 @@ pub struct AppState {
     pub market_cache: markets::MarketCache,
     pub alert_tx: broadcast::Sender<alerts::Alert>,
     pub trade_tx: broadcast::Sender<alerts::LiveTrade>,
+    pub metadata_tx: tokio::sync::mpsc::Sender<(String, markets::MarketInfo)>,
     pub leaderboard_cache: LeaderboardCache,
     pub user_db: Arc<Mutex<rusqlite::Connection>>,
     pub jwt_secret: Arc<Vec<u8>>,
+}
+
+async fn metadata_writer(
+    db: clickhouse::Client,
+    mut rx: tokio::sync::mpsc::Receiver<(String, markets::MarketInfo)>,
+) {
+    use super::types::MarketMetadataRow;
+
+    let mut batch: Vec<MarketMetadataRow> = Vec::with_capacity(100);
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+
+    loop {
+        tokio::select! {
+            Some((asset_id, info)) = rx.recv() => {
+                let now = chrono::Utc::now().timestamp() as u32;
+                batch.push(MarketMetadataRow {
+                    asset_id,
+                    question: info.question,
+                    outcome: info.outcome,
+                    category: info.category,
+                    condition_id: info.condition_id.unwrap_or_default(),
+                    gamma_token_id: info.gamma_token_id,
+                    outcome_index: info.outcome_index as u8,
+                    active: if info.active { 1 } else { 0 },
+                    all_token_ids: info.all_token_ids,
+                    outcomes: info.outcomes,
+                    updated_at: now,
+                });
+                if batch.len() >= 100 {
+                    flush_metadata_batch(&db, &mut batch).await;
+                }
+            }
+            _ = interval.tick() => {
+                if !batch.is_empty() {
+                    flush_metadata_batch(&db, &mut batch).await;
+                }
+            }
+        }
+    }
+}
+
+async fn flush_metadata_batch(
+    db: &clickhouse::Client,
+    batch: &mut Vec<super::types::MarketMetadataRow>,
+) {
+    let mut inserter = match db.insert("poly_dearboard.market_metadata") {
+        Ok(i) => i,
+        Err(e) => {
+            tracing::warn!("market_metadata batch insert failed: {e}");
+            batch.clear();
+            return;
+        }
+    };
+    let rows: Vec<_> = batch.drain(..).collect();
+    for row in rows {
+        if let Err(e) = inserter.write(&row).await {
+            tracing::warn!("market_metadata row write failed: {e}");
+            return;
+        }
+    }
+    if let Err(e) = inserter.end().await {
+        tracing::warn!("market_metadata batch flush failed: {e}");
+    }
 }
 
 pub async fn run(client: clickhouse::Client, port: u16) {
@@ -39,6 +103,8 @@ pub async fn run(client: clickhouse::Client, port: u16) {
 
     let (alert_tx, _) = broadcast::channel::<alerts::Alert>(256);
     let (trade_tx, _) = broadcast::channel::<alerts::LiveTrade>(512);
+    let (metadata_tx, metadata_rx) =
+        tokio::sync::mpsc::channel::<(String, markets::MarketInfo)>(1024);
 
     let state = AppState {
         db: client,
@@ -46,6 +112,7 @@ pub async fn run(client: clickhouse::Client, port: u16) {
         market_cache: markets::new_cache(),
         alert_tx,
         trade_tx,
+        metadata_tx,
         leaderboard_cache: Arc::new(RwLock::new(HashMap::new())),
         user_db: Arc::new(Mutex::new(user_conn)),
         jwt_secret: Arc::new(jwt_secret.into_bytes()),
@@ -58,6 +125,7 @@ pub async fn run(client: clickhouse::Client, port: u16) {
         let cache = state.market_cache.clone();
         tokio::spawn(async move {
             markets::warm_cache(&http, &db, &cache).await;
+            markets::persist_cache_to_clickhouse(&db, &cache).await;
             markets::populate_resolved_prices(&db, &cache).await;
             // Re-warm every 10 minutes to catch new markets + resolutions
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(600));
@@ -66,9 +134,16 @@ pub async fn run(client: clickhouse::Client, port: u16) {
                 interval.tick().await;
                 tracing::info!("Refreshing market cache...");
                 markets::warm_cache(&http, &db, &cache).await;
+                markets::persist_cache_to_clickhouse(&db, &cache).await;
                 markets::populate_resolved_prices(&db, &cache).await;
             }
         });
+    }
+
+    // Batched metadata writer: drains webhook-time metadata inserts into ClickHouse
+    {
+        let db = state.db.clone();
+        tokio::spawn(metadata_writer(db, metadata_rx));
     }
 
     // Background leaderboard cache warmer — keeps the default view always warm

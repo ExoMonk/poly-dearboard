@@ -388,7 +388,7 @@ pub async fn trader_trades(
     {
         let token_ids: Vec<String> = trades.iter().map(|t| t.asset_id.clone()).collect();
         let market_info =
-            markets::resolve_markets(&state.http, &state.market_cache, &token_ids).await;
+            markets::resolve_markets(&state.http, &state.db, &state.market_cache, &token_ids).await;
         for trade in &mut trades {
             trade.asset_id = market_info
                 .get(&trade.asset_id)
@@ -484,7 +484,7 @@ pub async fn hot_markets(
 
     let token_ids: Vec<String> = rows.iter().map(|r| r.asset_id.clone()).collect();
     let market_info =
-        markets::resolve_markets(&state.http, &state.market_cache, &token_ids).await;
+        markets::resolve_markets(&state.http, &state.db, &state.market_cache, &token_ids).await;
 
     // Merge tokens belonging to the same event (Yes/No → one row)
     let mut merged: std::collections::HashMap<String, HotMarket> =
@@ -637,7 +637,7 @@ pub async fn recent_trades(
         .into_iter()
         .collect();
     let market_info =
-        markets::resolve_markets(&state.http, &state.market_cache, &token_ids).await;
+        markets::resolve_markets(&state.http, &state.db, &state.market_cache, &token_ids).await;
 
     let trades = rows
         .into_iter()
@@ -729,7 +729,7 @@ pub async fn trader_positions(
 
     let token_ids: Vec<String> = rows.iter().map(|r| r.asset_id.clone()).collect();
     let market_info =
-        markets::resolve_markets(&state.http, &state.market_cache, &token_ids).await;
+        markets::resolve_markets(&state.http, &state.db, &state.market_cache, &token_ids).await;
 
     let mut open = Vec::new();
     let mut closed = Vec::new();
@@ -1002,7 +1002,7 @@ pub async fn resolve_market(
         return Err((StatusCode::BAD_REQUEST, "token_ids required".to_string()));
     }
 
-    let info = markets::resolve_markets(&state.http, &state.market_cache, &token_ids).await;
+    let info = markets::resolve_markets(&state.http, &state.db, &state.market_cache, &token_ids).await;
 
     let mut resolved: std::collections::HashMap<String, ResolvedMarket> =
         std::collections::HashMap::new();
@@ -1230,7 +1230,7 @@ pub async fn smart_money(
 
     let token_ids: Vec<String> = rows.iter().map(|r| r.asset_id.clone()).collect();
     let market_info =
-        markets::resolve_markets(&state.http, &state.market_cache, &token_ids).await;
+        markets::resolve_markets(&state.http, &state.db, &state.market_cache, &token_ids).await;
 
     // Merge Yes/No tokens of the same market into one entry
     let mut merged: std::collections::HashMap<String, SmartMoneyMarket> =
@@ -1368,7 +1368,7 @@ pub async fn trader_profile(
     // Resolve market metadata for all positions
     let token_ids: Vec<String> = positions.iter().map(|p| p.asset_id.clone()).collect();
     let market_info =
-        markets::resolve_markets(&state.http, &state.market_cache, &token_ids).await;
+        markets::resolve_markets(&state.http, &state.db, &state.market_cache, &token_ids).await;
 
     // Biggest win / biggest loss
     let mut best_win: Option<(f64, &ProfilePositionRow)> = None;
@@ -2440,7 +2440,7 @@ pub async fn copy_portfolio(
     // Market enrichment
     let asset_ids: Vec<String> = rows.iter().map(|r| r.asset_id.clone()).collect();
     let market_info =
-        markets::resolve_markets(&state.http, &state.market_cache, &asset_ids).await;
+        markets::resolve_markets(&state.http, &state.db, &state.market_cache, &asset_ids).await;
 
     // Merge Yes/No tokens of the same market, aggregate per question
     let mut merged: std::collections::HashMap<String, CopyPortfolioPosition> =

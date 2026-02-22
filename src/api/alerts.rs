@@ -126,12 +126,21 @@ pub async fn webhook_handler(
     }
 
     for event in &payload.event_data {
+        let is_live = is_event_live(event);
+
         let mut alert = {
             let cache = state.market_cache.read().await;
 
             // Broadcast ALL trades for /ws/trades subscribers (before whale filter)
-            if payload.event_name == "OrderFilled" {
+            // but only if the event is live (not a backfill replay)
+            if payload.event_name == "OrderFilled" && is_live {
                 if let Some(live_trade) = build_live_trade(event, &cache) {
+                    // Queue metadata persistence for this token (batched writer)
+                    if let Some(info) = cache.get(&live_trade.cache_key) {
+                        let _ = state
+                            .metadata_tx
+                            .try_send((live_trade.asset_id.clone(), info.clone()));
+                    }
                     let _ = state.trade_tx.send(live_trade);
                 }
             }
@@ -184,8 +193,11 @@ pub async fn webhook_handler(
         }
 
         if let Some(alert) = alert {
-            // Ignore send errors — just means no WebSocket subscribers
-            let _ = state.alert_tx.send(alert);
+            if is_live {
+                let _ = state.alert_tx.send(alert);
+            } else {
+                tracing::debug!("Backfill guard: suppressed alert for stale event");
+            }
         }
     }
 
@@ -421,6 +433,43 @@ fn format_usdc(raw: &str) -> String {
     let whole = n / 1_000_000;
     let frac = n % 1_000_000;
     format!("{whole}.{frac:06}")
+}
+
+/// Returns true if the event's block_timestamp is within 5 minutes of now.
+/// During backfill, events are historical and should not trigger live broadcasts.
+///
+/// block_timestamp arrives from rindexer as a decimal string of unix epoch
+/// seconds (e.g. "1705312496"), serialized from alloy U256.
+fn is_event_live(event: &serde_json::Value) -> bool {
+    let Some(tx_info) = event.get("transaction_information") else {
+        tracing::warn!("is_event_live: no transaction_information field");
+        return true; // fail-open: broadcast if we can't determine staleness
+    };
+    let ts_val = tx_info.get("block_timestamp");
+    // block_timestamp is Option<U256> in rindexer — could be null or missing
+    let ts_str = ts_val.and_then(|v| v.as_str());
+    if ts_str.is_none() {
+        tracing::debug!(
+            "is_event_live: block_timestamp missing or not a string (value: {:?})",
+            ts_val
+        );
+        return true; // fail-open: broadcast if timestamp unavailable
+    }
+    let ts_str = ts_str.unwrap();
+    let Ok(ts) = (if let Some(hex) = ts_str.strip_prefix("0x") {
+        i64::from_str_radix(hex, 16)
+    } else {
+        ts_str.parse::<i64>()
+    }) else {
+        tracing::warn!("is_event_live: failed to parse block_timestamp: {ts_str}");
+        return true; // fail-open
+    };
+    let now = chrono::Utc::now().timestamp();
+    let delta = (now - ts).abs();
+    if delta >= 300 {
+        tracing::debug!("is_event_live: stale event (delta={delta}s, ts={ts})");
+    }
+    delta < 300
 }
 
 // ---------------------------------------------------------------------------

@@ -324,13 +324,66 @@ pub async fn populate_resolved_prices(db: &clickhouse::Client, cache: &MarketCac
     tracing::info!("Populated {count} resolved prices from on-chain data");
 }
 
+/// Flush the in-memory market cache to ClickHouse `market_metadata` table.
+/// Uses INSERT (not TRUNCATE+INSERT) because ReplacingMergeTree handles dedup.
+pub async fn persist_cache_to_clickhouse(db: &clickhouse::Client, cache: &MarketCache) {
+    use super::types::MarketMetadataRow;
+
+    let cache_read = cache.read().await;
+    if cache_read.is_empty() {
+        return;
+    }
+
+    let now = chrono::Utc::now().timestamp() as u32;
+
+    let mut inserter = match db.insert("poly_dearboard.market_metadata") {
+        Ok(i) => i,
+        Err(e) => {
+            tracing::warn!("Failed to create inserter for market_metadata: {e}");
+            return;
+        }
+    };
+
+    let mut count = 0u64;
+    for (_key, info) in cache_read.iter() {
+        let row = MarketMetadataRow {
+            asset_id: info.gamma_token_id.clone(),
+            question: info.question.clone(),
+            outcome: info.outcome.clone(),
+            category: info.category.clone(),
+            condition_id: info.condition_id.clone().unwrap_or_default(),
+            gamma_token_id: info.gamma_token_id.clone(),
+            outcome_index: info.outcome_index as u8,
+            active: if info.active { 1 } else { 0 },
+            all_token_ids: info.all_token_ids.clone(),
+            outcomes: info.outcomes.clone(),
+            updated_at: now,
+        };
+        if let Err(e) = inserter.write(&row).await {
+            tracing::warn!("Failed to write market_metadata row: {e}");
+            return;
+        }
+        count += 1;
+    }
+    drop(cache_read);
+
+    if let Err(e) = inserter.end().await {
+        tracing::warn!("Failed to flush market_metadata: {e}");
+        return;
+    }
+
+    tracing::info!("Persisted {count} market metadata entries to ClickHouse");
+}
+
 /// Resolve token IDs to market info.
 ///
 /// Lookup strategy:
 /// 1. Prefix match against the pre-warmed cache (handles f64 precision loss)
-/// 2. For cache misses with full-precision IDs, try individual Gamma API calls
+/// 2. ClickHouse `market_metadata` table (persisted cache, no external dep)
+/// 3. For remaining misses, try individual Gamma API calls
 pub async fn resolve_markets(
     http: &reqwest::Client,
+    db: &clickhouse::Client,
     cache: &MarketCache,
     token_ids: &[String],
 ) -> HashMap<String, MarketInfo> {
@@ -353,7 +406,61 @@ pub async fn resolve_markets(
         return result;
     }
 
-    // Resolve uncached full-precision IDs via Gamma API (max 10 concurrent)
+    // Tier 2: ClickHouse market_metadata (faster than Gamma API, no external dep)
+    {
+        let placeholders: Vec<String> = uncached.iter().map(|id| format!("'{id}'")).collect();
+        let in_clause = placeholders.join(",");
+        let query = format!(
+            "SELECT asset_id, question, outcome, category, condition_id, gamma_token_id, \
+                    outcome_index, active, all_token_ids, outcomes \
+             FROM poly_dearboard.market_metadata FINAL \
+             WHERE asset_id IN ({in_clause})"
+        );
+
+        #[derive(clickhouse::Row, serde::Deserialize)]
+        struct MetadataRow {
+            asset_id: String,
+            question: String,
+            outcome: String,
+            category: String,
+            condition_id: String,
+            gamma_token_id: String,
+            outcome_index: u8,
+            active: u8,
+            all_token_ids: Vec<String>,
+            outcomes: Vec<String>,
+        }
+
+        if let Ok(rows) = db.query(&query).fetch_all::<MetadataRow>().await {
+            let mut c = cache.write().await;
+            for row in rows {
+                let info = MarketInfo {
+                    question: row.question,
+                    outcome: row.outcome,
+                    category: row.category,
+                    active: row.active == 1,
+                    gamma_token_id: row.gamma_token_id,
+                    condition_id: if row.condition_id.is_empty() {
+                        None
+                    } else {
+                        Some(row.condition_id)
+                    },
+                    outcome_index: row.outcome_index as usize,
+                    all_token_ids: row.all_token_ids,
+                    outcomes: row.outcomes,
+                };
+                c.insert(cache_key(&row.asset_id), info.clone());
+                result.insert(row.asset_id, info);
+            }
+        }
+    }
+
+    uncached.retain(|id| !result.contains_key(id));
+    if uncached.is_empty() {
+        return result;
+    }
+
+    // Tier 3: Resolve remaining via Gamma API (max 10 concurrent)
     let sem = Arc::new(tokio::sync::Semaphore::new(10));
     let mut handles = Vec::new();
 

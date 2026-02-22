@@ -597,3 +597,20 @@ pub struct CopyPortfolioResponse {
     pub positions: Vec<CopyPortfolioPosition>,
     pub summary: CopyPortfolioSummary,
 }
+
+// -- Market Metadata (persisted from Gamma API cache to ClickHouse) --
+
+#[derive(clickhouse::Row, Serialize, Deserialize)]
+pub struct MarketMetadataRow {
+    pub asset_id: String,
+    pub question: String,
+    pub outcome: String,
+    pub category: String,
+    pub condition_id: String,
+    pub gamma_token_id: String,
+    pub outcome_index: u8,
+    pub active: u8,
+    pub all_token_ids: Vec<String>,
+    pub outcomes: Vec<String>,
+    pub updated_at: u32,
+}
