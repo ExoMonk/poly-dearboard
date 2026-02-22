@@ -1,0 +1,201 @@
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useReducer,
+  type ReactNode,
+} from "react";
+import type {
+  LogEntry,
+  TerminalHeight,
+  TerminalTab,
+  WalletStatus,
+} from "../../types";
+
+const MAX_LOGS = 500;
+const LS_KEY = "terminal-state";
+
+// --- State ---
+
+interface TerminalState {
+  isOpen: boolean;
+  height: TerminalHeight;
+  activeTab: TerminalTab;
+  logs: LogEntry[];
+  walletStatus: WalletStatus;
+  activeSessions: number;
+  walletBalance: string | null;
+}
+
+// --- Actions ---
+
+type TerminalAction =
+  | { type: "TOGGLE" }
+  | { type: "SET_HEIGHT"; height: TerminalHeight }
+  | { type: "SET_TAB"; tab: TerminalTab }
+  | { type: "ADD_LOG"; entry: LogEntry }
+  | { type: "CLEAR_LOGS" }
+  | { type: "SET_WALLET_STATUS"; status: WalletStatus }
+  | { type: "SET_ACTIVE_SESSIONS"; count: number }
+  | { type: "SET_WALLET_BALANCE"; balance: string | null };
+
+function reducer(state: TerminalState, action: TerminalAction): TerminalState {
+  switch (action.type) {
+    case "TOGGLE": {
+      const isOpen = !state.isOpen;
+      return {
+        ...state,
+        isOpen,
+        height: isOpen ? (state.height === "collapsed" ? "half" : state.height) : "collapsed",
+      };
+    }
+    case "SET_HEIGHT": {
+      const isOpen = action.height !== "collapsed";
+      return { ...state, height: action.height, isOpen };
+    }
+    case "SET_TAB":
+      return { ...state, activeTab: action.tab };
+    case "ADD_LOG": {
+      const logs =
+        state.logs.length >= MAX_LOGS
+          ? [...state.logs.slice(state.logs.length - MAX_LOGS + 1), action.entry]
+          : [...state.logs, action.entry];
+      return { ...state, logs };
+    }
+    case "CLEAR_LOGS":
+      return { ...state, logs: [] };
+    case "SET_WALLET_STATUS":
+      return { ...state, walletStatus: action.status };
+    case "SET_ACTIVE_SESSIONS":
+      return { ...state, activeSessions: action.count };
+    case "SET_WALLET_BALANCE":
+      return { ...state, walletBalance: action.balance };
+  }
+}
+
+// --- Persisted initial state ---
+
+function loadPersistedState(): Pick<TerminalState, "height" | "activeTab"> {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        height: parsed.height ?? "collapsed",
+        activeTab: parsed.activeTab ?? "logs",
+      };
+    }
+  } catch {
+    // ignore
+  }
+  return { height: "collapsed", activeTab: "logs" };
+}
+
+function persistState(height: TerminalHeight, activeTab: TerminalTab) {
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify({ height, activeTab }));
+  } catch {
+    // ignore
+  }
+}
+
+// --- Contexts (split to avoid re-renders) ---
+
+interface TerminalStateContextValue extends TerminalState {}
+
+interface TerminalDispatchContextValue {
+  toggle: () => void;
+  setHeight: (h: TerminalHeight) => void;
+  setActiveTab: (tab: TerminalTab) => void;
+  addLog: (level: LogEntry["level"], message: string, meta?: Record<string, string>) => void;
+  clearLogs: () => void;
+  setWalletStatus: (status: WalletStatus) => void;
+  setActiveSessions: (count: number) => void;
+  setWalletBalance: (balance: string | null) => void;
+}
+
+const TerminalStateContext = createContext<TerminalStateContextValue | null>(null);
+const TerminalDispatchContext = createContext<TerminalDispatchContextValue | null>(null);
+
+// --- Provider ---
+
+export function TerminalProvider({ children }: { children: ReactNode }) {
+  const persisted = useMemo(loadPersistedState, []);
+
+  const [state, dispatch] = useReducer(reducer, {
+    isOpen: persisted.height !== "collapsed",
+    height: persisted.height,
+    activeTab: persisted.activeTab,
+    logs: [],
+    walletStatus: "none",
+    activeSessions: 0,
+    walletBalance: null,
+  });
+
+  // Persist height + tab changes
+  useEffect(() => {
+    persistState(state.height, state.activeTab);
+  }, [state.height, state.activeTab]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      // Ctrl+` toggle
+      if (e.ctrlKey && e.key === "`") {
+        e.preventDefault();
+        dispatch({ type: "TOGGLE" });
+      }
+      // Escape collapse (only when terminal is open)
+      if (e.key === "Escape" && state.isOpen) {
+        dispatch({ type: "SET_HEIGHT", height: "collapsed" });
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [state.isOpen]);
+
+  const dispatchers = useMemo<TerminalDispatchContextValue>(
+    () => ({
+      toggle: () => dispatch({ type: "TOGGLE" }),
+      setHeight: (height) => dispatch({ type: "SET_HEIGHT", height }),
+      setActiveTab: (tab) => dispatch({ type: "SET_TAB", tab }),
+      addLog: (level, message, meta) =>
+        dispatch({
+          type: "ADD_LOG",
+          entry: { id: crypto.randomUUID(), timestamp: Date.now(), level, message, meta },
+        }),
+      clearLogs: () => dispatch({ type: "CLEAR_LOGS" }),
+      setWalletStatus: (status) => dispatch({ type: "SET_WALLET_STATUS", status }),
+      setActiveSessions: (count) => dispatch({ type: "SET_ACTIVE_SESSIONS", count }),
+      setWalletBalance: (balance) => dispatch({ type: "SET_WALLET_BALANCE", balance }),
+    }),
+    [],
+  );
+
+  return (
+    <TerminalStateContext.Provider value={state}>
+      <TerminalDispatchContext.Provider value={dispatchers}>
+        {children}
+      </TerminalDispatchContext.Provider>
+    </TerminalStateContext.Provider>
+  );
+}
+
+// --- Hooks ---
+
+export function useTerminalState() {
+  const ctx = useContext(TerminalStateContext);
+  if (!ctx) throw new Error("useTerminalState must be used within TerminalProvider");
+  return ctx;
+}
+
+export function useTerminalDispatch() {
+  const ctx = useContext(TerminalDispatchContext);
+  if (!ctx) throw new Error("useTerminalDispatch must be used within TerminalProvider");
+  return ctx;
+}
+
+export function useTerminal() {
+  return { ...useTerminalState(), ...useTerminalDispatch() };
+}

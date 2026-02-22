@@ -399,3 +399,16 @@ export interface LagMessage {
 }
 
 export type SignalMessage = SignalTrade | ConvergenceAlert | LagMessage;
+
+// Terminal Shell (spec 12)
+export interface LogEntry {
+  id: string;
+  timestamp: number;
+  level: "info" | "warn" | "error" | "success";
+  message: string;
+  meta?: Record<string, string>;
+}
+
+export type TerminalTab = "wallet" | "sessions" | "logs" | "orders";
+export type TerminalHeight = "collapsed" | "half" | "full";
+export type WalletStatus = "none" | "setup" | "funded" | "active";

@@ -5,6 +5,7 @@ import { motion } from "motion/react";
 import { fetchHealth } from "../api";
 import { formatNumber } from "../lib/format";
 import ConnectWallet from "./ConnectWallet";
+import { TerminalShell } from "./Terminal";
 
 export default function Layout({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
@@ -63,7 +64,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       </motion.header>
 
       {/* Main */}
-      <main className="flex-1 max-w-7xl mx-auto px-6 py-8 w-full">{children}</main>
+      <main className="flex-1 max-w-7xl mx-auto px-6 py-8 w-full" style={{ paddingBottom: "var(--terminal-height, 40px)" }}>{children}</main>
 
       {/* Footer */}
       <footer className="glass gradient-border-top" style={{ borderRadius: 0 }}>
@@ -87,6 +88,8 @@ export default function Layout({ children }: { children: ReactNode }) {
           )}
         </div>
       </footer>
+      {/* Terminal */}
+      <TerminalShell />
     </div>
   );
 }
