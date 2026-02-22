@@ -598,6 +598,45 @@ pub struct CopyPortfolioResponse {
     pub summary: CopyPortfolioSummary,
 }
 
+// -- Trading Wallet --
+
+#[derive(Serialize)]
+pub struct TradingWalletInfo {
+    pub id: String,
+    pub address: String,
+    pub proxy_address: Option<String>,
+    pub status: String,
+    pub has_clob_credentials: bool,
+    pub created_at: String,
+}
+
+#[derive(Serialize)]
+pub struct WalletGenerateResponse {
+    pub id: String,
+    pub address: String,
+    pub private_key: String,
+    pub proxy_address: String,
+}
+
+#[derive(Deserialize)]
+pub struct ImportWalletRequest {
+    pub private_key: String,
+}
+
+#[derive(Serialize)]
+pub struct ImportWalletResponse {
+    pub id: String,
+    pub address: String,
+    pub proxy_address: String,
+}
+
+#[derive(Serialize)]
+pub struct DeriveCredentialsResponse {
+    pub success: bool,
+    pub wallet_id: String,
+    pub api_key: String,
+}
+
 // -- Market Metadata (persisted from Gamma API cache to ClickHouse) --
 
 #[derive(clickhouse::Row, Serialize, Deserialize)]

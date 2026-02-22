@@ -1,7 +1,26 @@
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use std::path::Path;
 
 use super::types::{TraderList, TraderListDetail, TraderListMember};
+
+// ---------------------------------------------------------------------------
+// Trading Wallet row type (internal, includes encrypted blobs)
+// ---------------------------------------------------------------------------
+
+pub struct TradingWalletRow {
+    pub id: String,
+    pub owner: String,
+    pub wallet_address: String,
+    pub proxy_address: Option<String>,
+    pub encrypted_key: Vec<u8>,
+    pub key_nonce: Vec<u8>,
+    pub clob_api_key: Option<String>,
+    pub clob_credentials: Option<Vec<u8>>,
+    pub clob_nonce: Option<Vec<u8>>,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
 
 /// Opens (or creates) the SQLite user database and runs migrations.
 /// Panics on failure — intended to be called once at startup.
@@ -40,6 +59,21 @@ pub fn init_user_db(path: &str) -> Connection {
             added_at    TEXT NOT NULL,
             PRIMARY KEY (list_id, address),
             FOREIGN KEY (list_id) REFERENCES trader_lists(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS trading_wallets (
+            id              TEXT PRIMARY KEY,
+            owner           TEXT NOT NULL,
+            wallet_address  TEXT NOT NULL,
+            proxy_address   TEXT,
+            encrypted_key   BLOB NOT NULL,
+            key_nonce       BLOB NOT NULL,
+            clob_api_key    TEXT,
+            clob_credentials BLOB,
+            clob_nonce      BLOB,
+            status          TEXT NOT NULL DEFAULT 'created',
+            created_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL
         )",
     )
     .expect("failed to create tables");
@@ -341,6 +375,174 @@ pub fn remove_list_members(
     )?;
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Trading Wallets
+// ---------------------------------------------------------------------------
+
+pub const MAX_WALLETS_PER_USER: usize = 3;
+
+pub fn count_trading_wallets(
+    conn: &Connection,
+    owner: &str,
+) -> Result<usize, rusqlite::Error> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM trading_wallets WHERE owner = ?1",
+        rusqlite::params![owner],
+        |row| row.get(0),
+    )
+}
+
+pub fn create_trading_wallet(
+    conn: &Connection,
+    owner: &str,
+    wallet_address: &str,
+    proxy_address: &str,
+    encrypted_key: &[u8],
+    key_nonce: &[u8],
+) -> Result<String, WalletError> {
+    let count = count_trading_wallets(conn, owner)?;
+    if count >= MAX_WALLETS_PER_USER {
+        return Err(WalletError::LimitReached);
+    }
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+
+    conn.execute(
+        "INSERT INTO trading_wallets (id, owner, wallet_address, proxy_address, encrypted_key, key_nonce, status, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'created', ?7, ?7)",
+        rusqlite::params![id, owner, wallet_address, proxy_address, encrypted_key, key_nonce, now],
+    )?;
+
+    Ok(id)
+}
+
+pub fn get_trading_wallets(
+    conn: &Connection,
+    owner: &str,
+) -> Result<Vec<TradingWalletRow>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT id, owner, wallet_address, proxy_address, encrypted_key, key_nonce,
+                clob_api_key, clob_credentials, clob_nonce, status, created_at, updated_at
+         FROM trading_wallets WHERE owner = ?1 ORDER BY created_at ASC",
+    )?;
+    let rows = stmt
+        .query_map(rusqlite::params![owner], |row| {
+            Ok(TradingWalletRow {
+                id: row.get(0)?,
+                owner: row.get(1)?,
+                wallet_address: row.get(2)?,
+                proxy_address: row.get(3)?,
+                encrypted_key: row.get(4)?,
+                key_nonce: row.get(5)?,
+                clob_api_key: row.get(6)?,
+                clob_credentials: row.get(7)?,
+                clob_nonce: row.get(8)?,
+                status: row.get(9)?,
+                created_at: row.get(10)?,
+                updated_at: row.get(11)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+pub fn get_trading_wallet_by_id(
+    conn: &Connection,
+    owner: &str,
+    id: &str,
+) -> Result<Option<TradingWalletRow>, rusqlite::Error> {
+    conn.query_row(
+        "SELECT id, owner, wallet_address, proxy_address, encrypted_key, key_nonce,
+                clob_api_key, clob_credentials, clob_nonce, status, created_at, updated_at
+         FROM trading_wallets WHERE owner = ?1 AND id = ?2",
+        rusqlite::params![owner, id],
+        |row| {
+            Ok(TradingWalletRow {
+                id: row.get(0)?,
+                owner: row.get(1)?,
+                wallet_address: row.get(2)?,
+                proxy_address: row.get(3)?,
+                encrypted_key: row.get(4)?,
+                key_nonce: row.get(5)?,
+                clob_api_key: row.get(6)?,
+                clob_credentials: row.get(7)?,
+                clob_nonce: row.get(8)?,
+                status: row.get(9)?,
+                created_at: row.get(10)?,
+                updated_at: row.get(11)?,
+            })
+        },
+    )
+    .optional()
+}
+
+pub fn update_wallet_credentials(
+    conn: &Connection,
+    owner: &str,
+    wallet_id: &str,
+    api_key: &str,
+    cred_blob: &[u8],
+    cred_nonce: &[u8],
+) -> Result<(), WalletError> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let changed = conn.execute(
+        "UPDATE trading_wallets SET clob_api_key = ?1, clob_credentials = ?2, clob_nonce = ?3,
+                status = 'credentialed', updated_at = ?4
+         WHERE owner = ?5 AND id = ?6",
+        rusqlite::params![api_key, cred_blob, cred_nonce, now, owner, wallet_id],
+    )?;
+    if changed == 0 {
+        return Err(WalletError::NotFound);
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+pub fn update_wallet_status(
+    conn: &Connection,
+    owner: &str,
+    wallet_id: &str,
+    status: &str,
+) -> Result<(), WalletError> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let changed = conn.execute(
+        "UPDATE trading_wallets SET status = ?1, updated_at = ?2 WHERE owner = ?3 AND id = ?4",
+        rusqlite::params![status, now, owner, wallet_id],
+    )?;
+    if changed == 0 {
+        return Err(WalletError::NotFound);
+    }
+    Ok(())
+}
+
+pub fn delete_trading_wallet(
+    conn: &Connection,
+    owner: &str,
+    wallet_id: &str,
+) -> Result<(), WalletError> {
+    let changed = conn.execute(
+        "DELETE FROM trading_wallets WHERE owner = ?1 AND id = ?2",
+        rusqlite::params![owner, wallet_id],
+    )?;
+    if changed == 0 {
+        return Err(WalletError::NotFound);
+    }
+    Ok(())
+}
+
+pub enum WalletError {
+    LimitReached,
+    NotFound,
+    Db(rusqlite::Error),
+}
+
+impl From<rusqlite::Error> for WalletError {
+    fn from(e: rusqlite::Error) -> Self {
+        WalletError::Db(e)
+    }
 }
 
 /// Returns lowercase addresses from a list. Verifies ownership. Returns NotFound if not owned.

@@ -1,11 +1,12 @@
-use axum::{routing::{get, post}, Router};
+use axum::routing::{delete, get, post};
+use axum::Router;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, RwLock};
 use tower_http::cors::{Any, CorsLayer};
 
-use super::{alerts, db, markets, routes, scanner, ws_subscriber, types::LeaderboardResponse};
+use super::{alerts, db, markets, routes, scanner, wallet, ws_subscriber, types::LeaderboardResponse};
 
 /// Cached leaderboard response with expiry.
 pub struct CachedResponse {
@@ -27,6 +28,7 @@ pub struct AppState {
     pub user_db: Arc<Mutex<rusqlite::Connection>>,
     pub jwt_secret: Arc<Vec<u8>>,
     pub ws_subscriber_active: Arc<AtomicBool>,
+    pub encryption_key: Arc<[u8; 32]>,
 }
 
 async fn metadata_writer(
@@ -101,6 +103,14 @@ pub async fn run(client: clickhouse::Client, port: u16) {
     let jwt_secret = std::env::var("JWT_SECRET")
         .expect("JWT_SECRET env var is required for wallet authentication");
 
+    let encryption_key_hex = std::env::var("WALLET_ENCRYPTION_KEY")
+        .expect("WALLET_ENCRYPTION_KEY env var is required (64 hex chars = 32 bytes)");
+    let encryption_key_bytes = hex::decode(encryption_key_hex.trim())
+        .expect("WALLET_ENCRYPTION_KEY must be valid hex");
+    let encryption_key: [u8; 32] = encryption_key_bytes
+        .try_into()
+        .expect("WALLET_ENCRYPTION_KEY must be exactly 32 bytes (64 hex chars)");
+
     let user_conn = db::init_user_db("data/users.db");
 
     let (alert_tx, _) = broadcast::channel::<alerts::Alert>(256);
@@ -119,6 +129,7 @@ pub async fn run(client: clickhouse::Client, port: u16) {
         user_db: Arc::new(Mutex::new(user_conn)),
         jwt_secret: Arc::new(jwt_secret.into_bytes()),
         ws_subscriber_active: Arc::new(AtomicBool::new(false)),
+        encryption_key: Arc::new(encryption_key),
     };
 
     // Pre-warm the market name cache in the background, then refresh periodically
@@ -206,7 +217,13 @@ pub async fn run(client: clickhouse::Client, port: u16) {
         // Trader Lists CRUD
         .route("/lists", get(routes::list_trader_lists).post(routes::create_trader_list))
         .route("/lists/{id}", get(routes::get_trader_list).patch(routes::rename_trader_list).delete(routes::delete_trader_list))
-        .route("/lists/{id}/members", post(routes::add_list_members).delete(routes::remove_list_members));
+        .route("/lists/{id}/members", post(routes::add_list_members).delete(routes::remove_list_members))
+        // Trading Wallets (multi-wallet, up to 3 per user)
+        .route("/wallets", get(wallet::get_wallets))
+        .route("/wallets/generate", post(wallet::generate_wallet))
+        .route("/wallets/import", post(wallet::import_wallet))
+        .route("/wallets/{id}/derive-credentials", post(wallet::derive_credentials))
+        .route("/wallets/{id}", delete(wallet::delete_wallet));
 
     let app = Router::new()
         .nest("/api", public_api.merge(protected_api))
