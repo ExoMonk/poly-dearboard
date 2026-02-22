@@ -1,0 +1,12 @@
+{
+  "name": "poly-dearboard-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test",
+    "test:wallet": "bun test wallet"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0"
+  }
+}

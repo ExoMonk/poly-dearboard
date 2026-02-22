@@ -1,4 +1,4 @@
-.PHONY: indexer live serve query frontend backfill backfill-resolutions backfill-stop prune clean publish deploy
+.PHONY: indexer live serve query frontend test-e2e backfill backfill-resolutions backfill-stop prune clean publish deploy
 
 COMPOSE := docker compose -f deployments/polyderboard-dev/docker-compose.yml
 
@@ -16,6 +16,9 @@ query: ## Run E2E leaderboard queries against the API
 
 frontend: ## Start frontend dev server on port 5173
 	cd frontend && bun run dev
+
+test-e2e: ## Run E2E API tests (requires running server: make serve)
+	bun test tests/
 
 backfill: ## Backfill historical blocks: FROM=<block> [TO=<block>] make backfill
 	@./scripts/backfill.sh

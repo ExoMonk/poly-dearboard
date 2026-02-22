@@ -25,3 +25,10 @@ uuid = { version = "1", features = ["v4"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
+aes-gcm = "0.10"
+hmac = "0.12"
+sha2 = "0.10"
+secrecy = { version = "0.10", features = ["serde"] }
+k256 = { version = "0.13", features = ["ecdsa"] }
+polymarket-client-sdk = { version = "0.4", features = ["clob"] }
+alloy = { version = "1", features = ["signers", "signer-local"] }

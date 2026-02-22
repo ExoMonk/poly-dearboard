@@ -12,3 +12,6 @@ tasks
 CLAUDE.md
 data/
 frontend/bun.lock
+tests/bun.lock
+tests/node_modules
+indexer/clickhouse/migrate.sql
