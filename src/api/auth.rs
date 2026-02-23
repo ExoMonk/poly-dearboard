@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, Signature, B256};
+use alloy_primitives::{Address, B256, Signature};
 use alloy_sol_types::{SolStruct, eip712_domain};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
@@ -53,12 +53,13 @@ pub fn recover_eip712_signer(
     let addr_lower = address.to_lowercase();
 
     // Parse the claimed address
-    let claimed: Address = addr_lower.parse().map_err(|_| AuthError::InvalidSignature)?;
-
-    // Check issuedAt is within 5 minutes
-    let issued: chrono::DateTime<chrono::Utc> = issued_at
+    let claimed: Address = addr_lower
         .parse()
         .map_err(|_| AuthError::InvalidSignature)?;
+
+    // Check issuedAt is within 5 minutes
+    let issued: chrono::DateTime<chrono::Utc> =
+        issued_at.parse().map_err(|_| AuthError::InvalidSignature)?;
     let age = chrono::Utc::now() - issued;
     if age.num_seconds() > 300 || age.num_seconds() < -60 {
         return Err(AuthError::Expired);

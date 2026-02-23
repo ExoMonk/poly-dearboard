@@ -1,7 +1,7 @@
-use alloy::primitives::{address, Address, U256};
+use alloy::network::EthereumWallet;
+use alloy::primitives::{Address, U256, address};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::signers::local::PrivateKeySigner;
-use alloy::network::EthereumWallet;
 
 /// USDC.e on Polygon (6 decimals)
 pub const USDC_ADDRESS: Address = address!("2791Bca1f2de4661ED88A30C99A7a9449Aa84174");
@@ -31,15 +31,11 @@ alloy::sol! {
 
 /// Creates a read-only provider (no signer) for RPC queries.
 pub fn create_provider(erpc_url: &str) -> impl Provider + Clone {
-    ProviderBuilder::new()
-        .connect_http(erpc_url.parse().expect("invalid eRPC URL"))
+    ProviderBuilder::new().connect_http(erpc_url.parse().expect("invalid eRPC URL"))
 }
 
 /// Creates a provider with a signing wallet for sending transactions.
-pub fn create_wallet_provider(
-    signer: PrivateKeySigner,
-    erpc_url: &str,
-) -> impl Provider + Clone {
+pub fn create_wallet_provider(signer: PrivateKeySigner, erpc_url: &str) -> impl Provider + Clone {
     let wallet = EthereumWallet::from(signer);
     ProviderBuilder::new()
         .wallet(wallet)
@@ -51,7 +47,12 @@ pub fn format_usdc(raw: U256) -> String {
     let divisor = U256::from(10u64.pow(USDC_DECIMALS));
     let whole = raw / divisor;
     let frac = raw % divisor;
-    format!("{}.{:0>width$}", whole, frac, width = USDC_DECIMALS as usize)
+    format!(
+        "{}.{:0>width$}",
+        whole,
+        frac,
+        width = USDC_DECIMALS as usize
+    )
 }
 
 /// Formats a U256 wei amount to human-readable POL (18 decimals, truncated to 4).

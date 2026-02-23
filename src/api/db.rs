@@ -322,11 +322,7 @@ pub fn rename_trader_list(
     Ok(())
 }
 
-pub fn delete_trader_list(
-    conn: &Connection,
-    id: &str,
-    owner: &str,
-) -> Result<(), ListError> {
+pub fn delete_trader_list(conn: &Connection, id: &str, owner: &str) -> Result<(), ListError> {
     let changed = conn.execute(
         "DELETE FROM trader_lists WHERE id = ?1 AND owner = ?2",
         rusqlite::params![id, owner],
@@ -424,10 +420,7 @@ pub fn remove_list_members(
 
 pub const MAX_WALLETS_PER_USER: usize = 3;
 
-pub fn count_trading_wallets(
-    conn: &Connection,
-    owner: &str,
-) -> Result<usize, rusqlite::Error> {
+pub fn count_trading_wallets(conn: &Connection, owner: &str) -> Result<usize, rusqlite::Error> {
     conn.query_row(
         "SELECT COUNT(*) FROM trading_wallets WHERE owner = ?1",
         rusqlite::params![owner],
@@ -640,10 +633,21 @@ pub fn create_copytrade_session(
              created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         rusqlite::params![
-            row.id, row.owner, row.list_id, row.top_n, row.copy_pct,
-            row.max_position_usdc, row.max_slippage_bps, row.order_type,
-            row.initial_capital, row.remaining_capital, row.simulate as i32,
-            row.max_loss_pct, row.status, row.created_at, row.updated_at,
+            row.id,
+            row.owner,
+            row.list_id,
+            row.top_n,
+            row.copy_pct,
+            row.max_position_usdc,
+            row.max_slippage_bps,
+            row.order_type,
+            row.initial_capital,
+            row.remaining_capital,
+            row.simulate as i32,
+            row.max_loss_pct,
+            row.status,
+            row.created_at,
+            row.updated_at,
         ],
     )?;
     Ok(())
@@ -757,10 +761,24 @@ pub fn insert_copytrade_order(
              fill_price, slippage_bps, tx_hash, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
         rusqlite::params![
-            row.id, row.session_id, row.source_tx_hash, row.source_trader,
-            row.clob_order_id, row.asset_id, row.side, row.price, row.source_price,
-            row.size_usdc, row.size_shares, row.status, row.error_message,
-            row.fill_price, row.slippage_bps, row.tx_hash, row.created_at, row.updated_at,
+            row.id,
+            row.session_id,
+            row.source_tx_hash,
+            row.source_trader,
+            row.clob_order_id,
+            row.asset_id,
+            row.side,
+            row.price,
+            row.source_price,
+            row.size_usdc,
+            row.size_shares,
+            row.status,
+            row.error_message,
+            row.fill_price,
+            row.slippage_bps,
+            row.tx_hash,
+            row.created_at,
+            row.updated_at,
         ],
     )?;
     Ok(())
@@ -779,7 +797,15 @@ pub fn update_copytrade_order(
     conn.execute(
         "UPDATE copy_trade_orders SET status = ?1, fill_price = ?2, slippage_bps = ?3,
                 tx_hash = ?4, clob_order_id = ?5, updated_at = ?6 WHERE id = ?7",
-        rusqlite::params![status, fill_price, slippage_bps, tx_hash, clob_order_id, now, id],
+        rusqlite::params![
+            status,
+            fill_price,
+            slippage_bps,
+            tx_hash,
+            clob_order_id,
+            now,
+            id
+        ],
     )?;
     Ok(())
 }
@@ -1010,10 +1036,7 @@ pub fn get_positions_raw(
 }
 
 /// Count total filled/simulated orders for a user across all sessions.
-pub fn get_total_order_count(
-    conn: &Connection,
-    owner: &str,
-) -> Result<u32, rusqlite::Error> {
+pub fn get_total_order_count(conn: &Connection, owner: &str) -> Result<u32, rusqlite::Error> {
     conn.query_row(
         "SELECT COUNT(o.id)
          FROM copy_trade_orders o
@@ -1084,9 +1107,7 @@ pub fn get_list_member_addresses(
         return Err(ListError::NotFound);
     }
 
-    let mut stmt = conn.prepare(
-        "SELECT address FROM trader_list_members WHERE list_id = ?1",
-    )?;
+    let mut stmt = conn.prepare("SELECT address FROM trader_list_members WHERE list_id = ?1")?;
     let addrs = stmt
         .query_map(rusqlite::params![list_id], |row| row.get(0))?
         .collect::<Result<Vec<String>, _>>()?;

@@ -2,10 +2,10 @@ use alloy::primitives::{Address, U256};
 use alloy::providers::Provider;
 use alloy::signers::Signer as _;
 use axum::{
+    Json,
     extract::{Path, State},
     http::{HeaderMap, HeaderValue, StatusCode},
     response::IntoResponse,
-    Json,
 };
 use secrecy::ExposeSecret;
 use std::str::FromStr;
@@ -15,9 +15,9 @@ use super::db::{self, WalletError};
 use super::middleware::AuthUser;
 use super::server::AppState;
 use super::types::{
-    ApprovalResult, DeriveCredentialsResponse, DepositAddresses, DepositStatus,
-    ImportWalletRequest, ImportWalletResponse, PendingDeposit, TradingWalletInfo,
-    WalletBalance, WalletGenerateResponse,
+    ApprovalResult, DepositAddresses, DepositStatus, DeriveCredentialsResponse,
+    ImportWalletRequest, ImportWalletResponse, PendingDeposit, TradingWalletInfo, WalletBalance,
+    WalletGenerateResponse,
 };
 
 /// Derives proxy wallet address using the SDK's official CREATE2 computation.
@@ -101,9 +101,7 @@ pub async fn generate_wallet(
     let owner = owner.to_lowercase();
 
     // Generate a random secp256k1 signing key
-    let signing_key = k256::ecdsa::SigningKey::random(
-        &mut k256::elliptic_curve::rand_core::OsRng,
-    );
+    let signing_key = k256::ecdsa::SigningKey::random(&mut k256::elliptic_curve::rand_core::OsRng);
     let private_key_bytes = signing_key.to_bytes();
     let address = address_from_signing_key(&signing_key);
 
@@ -127,7 +125,14 @@ pub async fn generate_wallet(
         let proxy_addr = proxy_addr.clone();
         move || {
             let conn = state.user_db.lock().expect("user_db lock");
-            db::create_trading_wallet(&conn, &owner, &wallet_addr, &proxy_addr, &encrypted_key, &key_nonce)
+            db::create_trading_wallet(
+                &conn,
+                &owner,
+                &wallet_addr,
+                &proxy_addr,
+                &encrypted_key,
+                &key_nonce,
+            )
         }
     })
     .await
@@ -183,13 +188,12 @@ pub async fn import_wallet(
 
     // Derive address from private key
     let signing_key =
-        k256::ecdsa::SigningKey::from_bytes(key_bytes.as_slice().into())
-            .map_err(|_| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    "Invalid private key. Could not derive signing key.".into(),
-                )
-            })?;
+        k256::ecdsa::SigningKey::from_bytes(key_bytes.as_slice().into()).map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                "Invalid private key. Could not derive signing key.".into(),
+            )
+        })?;
 
     let address = address_from_signing_key(&signing_key);
     let proxy_addr = proxy_address_for(&address);
@@ -210,7 +214,14 @@ pub async fn import_wallet(
         let proxy_addr = proxy_addr.clone();
         move || {
             let conn = state.user_db.lock().expect("user_db lock");
-            db::create_trading_wallet(&conn, &owner, &wallet_addr, &proxy_addr, &encrypted_key, &key_nonce)
+            db::create_trading_wallet(
+                &conn,
+                &owner,
+                &wallet_addr,
+                &proxy_addr,
+                &encrypted_key,
+                &key_nonce,
+            )
         }
     })
     .await
@@ -258,26 +269,48 @@ pub async fn derive_credentials(
         &row.key_nonce,
         owner.as_bytes(),
     )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Decryption failed: {e}")))?;
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Decryption failed: {e}"),
+        )
+    })?;
 
     let private_key_hex = format!("0x{}", hex::encode(&private_key_bytes));
 
     // 3. Create signer and derive CLOB credentials via SDK
     let signer = alloy::signers::local::LocalSigner::from_str(&private_key_hex)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Signer creation failed: {e}")))?
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Signer creation failed: {e}"),
+            )
+        })?
         .with_chain_id(Some(polymarket_client_sdk::POLYGON));
 
     let config = polymarket_client_sdk::clob::Config::builder()
         .use_server_time(true)
         .build();
 
-    let clob_client = polymarket_client_sdk::clob::Client::new("https://clob.polymarket.com", config)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("CLOB client error: {e}")))?;
+    let clob_client =
+        polymarket_client_sdk::clob::Client::new("https://clob.polymarket.com", config).map_err(
+            |e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("CLOB client error: {e}"),
+                )
+            },
+        )?;
 
     let credentials = clob_client
         .create_or_derive_api_key(&signer, None)
         .await
-        .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("CLOB API error: {e}")))?;
+        .map_err(|e| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!("CLOB API error: {e}"),
+            )
+        })?;
 
     // 4. Encrypt credentials (secret + passphrase as JSON blob)
     let api_key = credentials.key().to_string();
@@ -300,7 +333,14 @@ pub async fn derive_credentials(
         let api_key = api_key.clone();
         move || {
             let conn = state.user_db.lock().expect("user_db lock");
-            db::update_wallet_credentials(&conn, &owner, &wallet_id, &api_key, &cred_blob, &cred_nonce)
+            db::update_wallet_credentials(
+                &conn,
+                &owner,
+                &wallet_id,
+                &api_key,
+                &cred_blob,
+                &cred_nonce,
+            )
         }
     })
     .await
@@ -388,9 +428,14 @@ pub async fn get_balance(
     // Cache miss — do a live RPC query
     // USDC.e balance on proxy; allowances + POL on EOA
     let eoa: Address = row.wallet_address.parse().map_err(|_| {
-        (StatusCode::INTERNAL_SERVER_ERROR, "Invalid wallet address in DB".into())
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Invalid wallet address in DB".into(),
+        )
     })?;
-    let proxy = row.proxy_address.as_deref()
+    let proxy = row
+        .proxy_address
+        .as_deref()
         .and_then(|s| s.parse::<Address>().ok())
         .unwrap_or(eoa);
 
@@ -407,12 +452,10 @@ pub async fn get_balance(
         provider.get_balance(eoa),
     );
 
-    let usdc_raw = balance_res
-                .map_err(|e| (StatusCode::BAD_GATEWAY, format!("RPC error: {e}")))?;
+    let usdc_raw = balance_res.map_err(|e| (StatusCode::BAD_GATEWAY, format!("RPC error: {e}")))?;
     let ctf_allowance = ctf_res.unwrap_or_default();
     let neg_allowance = neg_res.unwrap_or_default();
-    let pol_wei = pol_res
-        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("RPC error: {e}")))?;
+    let pol_wei = pol_res.map_err(|e| (StatusCode::BAD_GATEWAY, format!("RPC error: {e}")))?;
 
     // Update cache
     let entry = super::server::WalletBalanceState {
@@ -424,7 +467,11 @@ pub async fn get_balance(
         neg_risk_approved: !neg_allowance.is_zero(),
         last_checked: std::time::Instant::now(),
     };
-    state.wallet_balances.write().await.insert(wallet_id, entry.clone());
+    state
+        .wallet_balances
+        .write()
+        .await
+        .insert(wallet_id, entry.clone());
 
     Ok(Json(WalletBalance {
         usdc_balance: entry.usdc_balance,
@@ -450,12 +497,17 @@ pub async fn approve_exchanges(
     let row = load_wallet(&state, &owner, &wallet_id).await?;
 
     let eoa: Address = row.wallet_address.parse().map_err(|_| {
-        (StatusCode::INTERNAL_SERVER_ERROR, "Invalid wallet address in DB".into())
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Invalid wallet address in DB".into(),
+        )
     })?;
 
     // Check POL balance on EOA (gas payer)
     let provider = contracts::create_provider(&state.erpc_url);
-    let pol_wei = provider.get_balance(eoa).await
+    let pol_wei = provider
+        .get_balance(eoa)
+        .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("RPC error: {e}")))?;
 
     if pol_wei < contracts::MIN_POL_WEI {
@@ -473,10 +525,7 @@ pub async fn approve_exchanges(
     let usdc_read = contracts::IERC20::new(contracts::USDC_ADDRESS, &provider);
     let ctf_call = usdc_read.allowance(eoa, contracts::CTF_EXCHANGE);
     let neg_call = usdc_read.allowance(eoa, contracts::NEG_RISK_EXCHANGE);
-    let (ctf_res, neg_res) = tokio::join!(
-        ctf_call.call(),
-        neg_call.call(),
-    );
+    let (ctf_res, neg_res) = tokio::join!(ctf_call.call(), neg_call.call(),);
     let ctf_allowance = ctf_res.unwrap_or_default();
     let neg_allowance = neg_res.unwrap_or_default();
 
@@ -496,11 +545,21 @@ pub async fn approve_exchanges(
         &row.key_nonce,
         owner.as_bytes(),
     )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Decryption failed: {e}")))?;
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Decryption failed: {e}"),
+        )
+    })?;
 
     let private_key_hex = format!("0x{}", hex::encode(&private_key_bytes));
     let signer = alloy::signers::local::PrivateKeySigner::from_str(&private_key_hex)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Signer error: {e}")))?
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Signer error: {e}"),
+            )
+        })?
         .with_chain_id(Some(137)); // Polygon
 
     let wallet_provider = contracts::create_wallet_provider(signer, &state.erpc_url);
@@ -511,25 +570,39 @@ pub async fn approve_exchanges(
 
     // Approve CTF Exchange if needed
     if ctf_allowance.is_zero() {
-        match usdc.approve(contracts::CTF_EXCHANGE, U256::MAX).send().await {
+        match usdc
+            .approve(contracts::CTF_EXCHANGE, U256::MAX)
+            .send()
+            .await
+        {
             Ok(pending) => match pending.get_receipt().await {
                 Ok(receipt) => {
                     ctf_tx_hash = Some(receipt.transaction_hash.to_string());
                 }
                 Err(e) => {
                     state.wallet_balances.write().await.remove(&wallet_id);
-                    return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("CTF approve receipt failed: {e}")));
+                    return Err((
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("CTF approve receipt failed: {e}"),
+                    ));
                 }
             },
             Err(e) => {
-                return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("CTF approve send failed: {e}")));
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("CTF approve send failed: {e}"),
+                ));
             }
         }
     }
 
     // Approve NegRisk Exchange if needed
     if neg_allowance.is_zero() {
-        match usdc.approve(contracts::NEG_RISK_EXCHANGE, U256::MAX).send().await {
+        match usdc
+            .approve(contracts::NEG_RISK_EXCHANGE, U256::MAX)
+            .send()
+            .await
+        {
             Ok(pending) => match pending.get_receipt().await {
                 Ok(receipt) => {
                     neg_risk_tx_hash = Some(receipt.transaction_hash.to_string());
@@ -539,7 +612,10 @@ pub async fn approve_exchanges(
                     state.wallet_balances.write().await.remove(&wallet_id);
                     return Err((
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("NegRisk approve failed (CTF may have succeeded: {:?}): {e}", ctf_tx_hash),
+                        format!(
+                            "NegRisk approve failed (CTF may have succeeded: {:?}): {e}",
+                            ctf_tx_hash
+                        ),
                     ));
                 }
             },
@@ -547,7 +623,10 @@ pub async fn approve_exchanges(
                 state.wallet_balances.write().await.remove(&wallet_id);
                 return Err((
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("NegRisk approve send failed (CTF may have succeeded: {:?}): {e}", ctf_tx_hash),
+                    format!(
+                        "NegRisk approve send failed (CTF may have succeeded: {:?}): {e}",
+                        ctf_tx_hash
+                    ),
                 ));
             }
         }
@@ -575,7 +654,9 @@ pub async fn get_deposit_address(
     let owner = owner.to_lowercase();
     let row = load_wallet(&state, &owner, &wallet_id).await?;
 
-    let proxy_address = row.proxy_address.unwrap_or_else(|| row.wallet_address.clone());
+    let proxy_address = row
+        .proxy_address
+        .unwrap_or_else(|| row.wallet_address.clone());
 
     // Call Polymarket Bridge API (POST /deposit with JSON body)
     let resp = state
@@ -595,10 +676,12 @@ pub async fn get_deposit_address(
         ));
     }
 
-    let data: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Bridge API parse error: {e}")))?;
+    let data: serde_json::Value = resp.json().await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Bridge API parse error: {e}"),
+        )
+    })?;
 
     // Response has nested "address" object: { address: { evm, svm, btc }, note }
     let addrs = &data["address"];
@@ -622,12 +705,16 @@ pub async fn get_deposit_status(
     let owner = owner.to_lowercase();
     let row = load_wallet(&state, &owner, &wallet_id).await?;
 
-    let proxy_address = row.proxy_address.unwrap_or_else(|| row.wallet_address.clone());
+    let proxy_address = row
+        .proxy_address
+        .unwrap_or_else(|| row.wallet_address.clone());
 
     // GET /status/{address} — path param, not query
     let resp = state
         .http
-        .get(format!("https://bridge.polymarket.com/status/{proxy_address}"))
+        .get(format!(
+            "https://bridge.polymarket.com/status/{proxy_address}"
+        ))
         .send()
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Bridge API error: {e}")))?;
@@ -636,10 +723,12 @@ pub async fn get_deposit_status(
         return Ok(Json(DepositStatus { pending: vec![] }));
     }
 
-    let data: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Bridge API parse error: {e}")))?;
+    let data: serde_json::Value = resp.json().await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Bridge API parse error: {e}"),
+        )
+    })?;
 
     let pending = data["transactions"]
         .as_array()
@@ -647,7 +736,10 @@ pub async fn get_deposit_status(
             txs.iter()
                 .map(|tx| PendingDeposit {
                     from_chain: tx["fromChainId"].as_str().unwrap_or("unknown").to_string(),
-                    token: tx["fromTokenAddress"].as_str().unwrap_or("unknown").to_string(),
+                    token: tx["fromTokenAddress"]
+                        .as_str()
+                        .unwrap_or("unknown")
+                        .to_string(),
                     amount: tx["fromAmountBaseUnit"].as_str().unwrap_or("0").to_string(),
                     status: tx["status"].as_str().unwrap_or("unknown").to_string(),
                     tx_hash: tx["txHash"].as_str().map(String::from),

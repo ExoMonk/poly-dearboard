@@ -3,13 +3,13 @@ use std::env;
 use std::time::{Duration, Instant};
 
 use axum::{
+    Json,
     extract::{
-        ws::{Message, WebSocket},
         Query, State, WebSocketUpgrade,
+        ws::{Message, WebSocket},
     },
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    Json,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
@@ -165,13 +165,19 @@ pub async fn webhook_handler(
         }) = alert
         {
             if question.is_some() {
-                tracing::info!("ConditionResolution enriched from cache: condition_id={condition_id}");
+                tracing::info!(
+                    "ConditionResolution enriched from cache: condition_id={condition_id}"
+                );
             } else {
-                tracing::warn!("ConditionResolution cache miss: condition_id={condition_id}, trying Gamma API");
+                tracing::warn!(
+                    "ConditionResolution cache miss: condition_id={condition_id}, trying Gamma API"
+                );
                 if let Some((q, outs, tid)) =
                     fetch_resolution_context(&state.http, condition_id).await
                 {
-                    tracing::info!("ConditionResolution enriched from Gamma: condition_id={condition_id}");
+                    tracing::info!(
+                        "ConditionResolution enriched from Gamma: condition_id={condition_id}"
+                    );
                     let winner = payout_numerators
                         .iter()
                         .enumerate()
@@ -221,10 +227,8 @@ fn parse_trade_data<'a>(
     event: &'a serde_json::Value,
     cache: &'a std::collections::HashMap<String, markets::MarketInfo>,
 ) -> Option<TradeData<'a>> {
-    let tx_info: TxInfo = serde_json::from_value(
-        event.get("transaction_information")?.clone(),
-    )
-    .ok()?;
+    let tx_info: TxInfo =
+        serde_json::from_value(event.get("transaction_information")?.clone()).ok()?;
 
     let maker_asset_id = event.get("makerAssetId")?.as_str()?;
     let taker_asset_id = event.get("takerAssetId")?.as_str()?;
@@ -253,7 +257,17 @@ fn parse_trade_data<'a>(
     let key = markets::cache_key(asset_id);
     let info = cache.get(&key);
 
-    Some(TradeData { tx_info, side, asset_id, usdc_raw, token_raw, trader: maker, exchange, key, info })
+    Some(TradeData {
+        tx_info,
+        side,
+        asset_id,
+        usdc_raw,
+        token_raw,
+        trader: maker,
+        exchange,
+        key,
+        info,
+    })
 }
 
 fn parse_order_filled(
@@ -298,7 +312,8 @@ fn build_live_trade(
         block_timestamp: td.tx_info.block_timestamp,
         trader: td.trader.into(),
         side: td.side.into(),
-        asset_id: td.info
+        asset_id: td
+            .info
             .map(|i| i.gamma_token_id.clone())
             .unwrap_or_else(|| markets::to_integer_id(td.asset_id)),
         amount: format_usdc(td.token_raw),
@@ -316,10 +331,8 @@ fn parse_condition_resolution(
     event: &serde_json::Value,
     cache: &std::collections::HashMap<String, markets::MarketInfo>,
 ) -> Option<Alert> {
-    let tx_info: TxInfo = serde_json::from_value(
-        event.get("transaction_information")?.clone(),
-    )
-    .ok()?;
+    let tx_info: TxInfo =
+        serde_json::from_value(event.get("transaction_information")?.clone()).ok()?;
 
     let condition_id = event.get("conditionId")?.as_str()?;
     let oracle = event.get("oracle")?.as_str().unwrap_or("");
@@ -335,9 +348,9 @@ fn parse_condition_resolution(
     let mut matched: Vec<&markets::MarketInfo> = cache
         .values()
         .filter(|info| {
-            info.condition_id.as_deref().is_some_and(|cid| {
-                cid.strip_prefix("0x").unwrap_or(cid) == bare_cid
-            })
+            info.condition_id
+                .as_deref()
+                .is_some_and(|cid| cid.strip_prefix("0x").unwrap_or(cid) == bare_cid)
         })
         .collect();
     matched.sort_by_key(|info| info.outcome_index);
@@ -476,10 +489,7 @@ fn is_event_live(event: &serde_json::Value) -> bool {
 // GET /ws/alerts — WebSocket upgrade
 // ---------------------------------------------------------------------------
 
-pub async fn ws_handler(
-    State(state): State<AppState>,
-    ws: WebSocketUpgrade,
-) -> impl IntoResponse {
+pub async fn ws_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_ws(socket, state.alert_tx.subscribe()))
 }
 
@@ -639,7 +649,10 @@ pub async fn signals_ws_handler(
 
     // Mutual exclusion: exactly one of list_id or top_n
     if params.list_id.is_some() && params.top_n.is_some() {
-        return Err((axum::http::StatusCode::BAD_REQUEST, "Specify list_id or top_n, not both".into()));
+        return Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            "Specify list_id or top_n, not both".into(),
+        ));
     }
 
     let trader_set: HashSet<String> = if let Some(ref list_id) = params.list_id {
@@ -672,7 +685,9 @@ pub async fn signals_ws_handler(
             address: String,
         }
 
-        let rows: Vec<Addr> = state.db.query(&query)
+        let rows: Vec<Addr> = state
+            .db
+            .query(&query)
             .fetch_all::<Addr>()
             .await
             .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -680,12 +695,14 @@ pub async fn signals_ws_handler(
     };
 
     if trader_set.is_empty() {
-        return Err((axum::http::StatusCode::BAD_REQUEST, "No traders found".into()));
+        return Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            "No traders found".into(),
+        ));
     }
 
-    Ok(ws.on_upgrade(move |socket| {
-        handle_signal_ws(socket, state.trade_tx.subscribe(), trader_set)
-    }))
+    Ok(ws
+        .on_upgrade(move |socket| handle_signal_ws(socket, state.trade_tx.subscribe(), trader_set)))
 }
 
 struct ConvergenceDetector {
@@ -721,7 +738,8 @@ impl ConvergenceDetector {
         entries.retain(|(_, ts, _, _)| now.duration_since(*ts) < self.window);
 
         // Count distinct traders
-        let distinct_traders: HashSet<&str> = entries.iter().map(|(t, _, _, _)| t.as_str()).collect();
+        let distinct_traders: HashSet<&str> =
+            entries.iter().map(|(t, _, _, _)| t.as_str()).collect();
         let count = distinct_traders.len();
 
         if count >= self.threshold {
@@ -740,7 +758,11 @@ impl ConvergenceDetector {
             // Dominant side
             let buy_count = entries.iter().filter(|(_, _, s, _)| s == "buy").count();
             let sell_count = entries.len() - buy_count;
-            let side = if buy_count >= sell_count { "BUY" } else { "SELL" };
+            let side = if buy_count >= sell_count {
+                "BUY"
+            } else {
+                "SELL"
+            };
 
             return Some(ConvergenceAlert {
                 question: trade.question.clone(),
@@ -765,7 +787,8 @@ impl ConvergenceDetector {
             !entries.is_empty()
         });
         // Also clean stale alert dedup entries
-        self.last_alert.retain(|_, ts| now.duration_since(*ts) < Duration::from_secs(120));
+        self.last_alert
+            .retain(|_, ts| now.duration_since(*ts) < Duration::from_secs(120));
 
         // Hard cap on tracked assets — drop oldest if exceeded
         while self.recent_trades.len() > self.max_assets {

@@ -1,11 +1,14 @@
-use axum::routing::{delete, get, post};
 use axum::Router;
+use axum::routing::{delete, get, post};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 use tower_http::cors::{Any, CorsLayer};
 
-use super::{alerts, contracts, copytrade, db, engine, markets, routes, scanner, wallet, ws_subscriber, types::LeaderboardResponse};
+use super::{
+    alerts, contracts, copytrade, db, engine, markets, routes, scanner, types::LeaderboardResponse,
+    wallet, ws_subscriber,
+};
 
 /// Cached leaderboard response with expiry.
 pub struct CachedResponse {
@@ -124,8 +127,8 @@ pub async fn run(client: clickhouse::Client, port: u16) {
 
     let encryption_key_hex = std::env::var("WALLET_ENCRYPTION_KEY")
         .expect("WALLET_ENCRYPTION_KEY env var is required (64 hex chars = 32 bytes)");
-    let encryption_key_bytes = hex::decode(encryption_key_hex.trim())
-        .expect("WALLET_ENCRYPTION_KEY must be valid hex");
+    let encryption_key_bytes =
+        hex::decode(encryption_key_hex.trim()).expect("WALLET_ENCRYPTION_KEY must be valid hex");
     let encryption_key: [u8; 32] = encryption_key_bytes
         .try_into()
         .expect("WALLET_ENCRYPTION_KEY must be exactly 32 bytes (64 hex chars)");
@@ -141,8 +144,7 @@ pub async fn run(client: clickhouse::Client, port: u16) {
         tokio::sync::mpsc::channel::<(String, markets::MarketInfo)>(1024);
     let (copytrade_cmd_tx, copytrade_cmd_rx) =
         tokio::sync::mpsc::channel::<engine::CopyTradeCommand>(64);
-    let (copytrade_update_tx, _) =
-        broadcast::channel::<super::types::CopyTradeUpdate>(256);
+    let (copytrade_update_tx, _) = broadcast::channel::<super::types::CopyTradeUpdate>(256);
     let (copytrade_live_tx, _) = broadcast::channel::<alerts::LiveTrade>(128);
     let (trader_watch_tx, trader_watch_rx) =
         tokio::sync::watch::channel::<HashSet<String>>(HashSet::new());
@@ -233,7 +235,14 @@ pub async fn run(client: clickhouse::Client, port: u16) {
         let ch = state.db.clone();
         let watch_tx = state.trader_watch_tx.clone();
         tokio::spawn(engine::copytrade_engine_loop(
-            trade_rx, copytrade_cmd_rx, update_tx, clob, udb, enc, ch, watch_tx,
+            trade_rx,
+            copytrade_cmd_rx,
+            update_tx,
+            clob,
+            udb,
+            enc,
+            ch,
+            watch_tx,
         ));
     }
 
@@ -244,7 +253,13 @@ pub async fn run(client: clickhouse::Client, port: u16) {
         let http = state.http.clone();
         let rpc_url = std::env::var("POLYGON_RPC_URL")
             .unwrap_or_else(|_| "http://erpc:4000/main/evm/137".into());
-        tokio::spawn(ws_subscriber::run(copytrade_tx, trader_watch_rx, cache, http, rpc_url));
+        tokio::spawn(ws_subscriber::run(
+            copytrade_tx,
+            trader_watch_rx,
+            cache,
+            http,
+            rpc_url,
+        ));
     }
 
     // Public API routes (no auth required)
@@ -268,27 +283,67 @@ pub async fn run(client: clickhouse::Client, port: u16) {
         .route("/lab/backtest", post(routes::backtest))
         .route("/lab/copy-portfolio", get(routes::copy_portfolio))
         // Trader Lists CRUD
-        .route("/lists", get(routes::list_trader_lists).post(routes::create_trader_list))
-        .route("/lists/{id}", get(routes::get_trader_list).patch(routes::rename_trader_list).delete(routes::delete_trader_list))
-        .route("/lists/{id}/members", post(routes::add_list_members).delete(routes::remove_list_members))
+        .route(
+            "/lists",
+            get(routes::list_trader_lists).post(routes::create_trader_list),
+        )
+        .route(
+            "/lists/{id}",
+            get(routes::get_trader_list)
+                .patch(routes::rename_trader_list)
+                .delete(routes::delete_trader_list),
+        )
+        .route(
+            "/lists/{id}/members",
+            post(routes::add_list_members).delete(routes::remove_list_members),
+        )
         // Trading Wallets (multi-wallet, up to 3 per user)
         .route("/wallets", get(wallet::get_wallets))
         .route("/wallets/generate", post(wallet::generate_wallet))
         .route("/wallets/import", post(wallet::import_wallet))
-        .route("/wallets/{id}/derive-credentials", post(wallet::derive_credentials))
+        .route(
+            "/wallets/{id}/derive-credentials",
+            post(wallet::derive_credentials),
+        )
         .route("/wallets/{id}/balance", get(wallet::get_balance))
         .route("/wallets/{id}/approve", post(wallet::approve_exchanges))
-        .route("/wallets/{id}/deposit-address", get(wallet::get_deposit_address))
-        .route("/wallets/{id}/deposit-status", get(wallet::get_deposit_status))
+        .route(
+            "/wallets/{id}/deposit-address",
+            get(wallet::get_deposit_address),
+        )
+        .route(
+            "/wallets/{id}/deposit-status",
+            get(wallet::get_deposit_status),
+        )
         .route("/wallets/{id}", delete(wallet::delete_wallet))
         // Copy-Trade Engine
-        .route("/copytrade/sessions", get(copytrade::list_sessions).post(copytrade::create_session))
-        .route("/copytrade/sessions/{id}", get(copytrade::get_session).patch(copytrade::update_session).delete(copytrade::delete_session))
-        .route("/copytrade/sessions/{id}/orders", get(copytrade::list_session_orders))
-        .route("/copytrade/sessions/{id}/stats", get(copytrade::get_session_stats))
-        .route("/copytrade/sessions/{id}/positions", get(copytrade::get_session_positions))
+        .route(
+            "/copytrade/sessions",
+            get(copytrade::list_sessions).post(copytrade::create_session),
+        )
+        .route(
+            "/copytrade/sessions/{id}",
+            get(copytrade::get_session)
+                .patch(copytrade::update_session)
+                .delete(copytrade::delete_session),
+        )
+        .route(
+            "/copytrade/sessions/{id}/orders",
+            get(copytrade::list_session_orders),
+        )
+        .route(
+            "/copytrade/sessions/{id}/stats",
+            get(copytrade::get_session_stats),
+        )
+        .route(
+            "/copytrade/sessions/{id}/positions",
+            get(copytrade::get_session_positions),
+        )
         .route("/copytrade/summary", get(copytrade::get_summary))
-        .route("/copytrade/active-traders", get(copytrade::get_active_traders))
+        .route(
+            "/copytrade/active-traders",
+            get(copytrade::get_active_traders),
+        )
         .route("/copytrade/close-position", post(copytrade::close_position));
 
     let app = Router::new()
@@ -379,12 +434,16 @@ async fn balance_poll_task(state: AppState) {
                     continue;
                 }
             };
-            let ctf_allowance = ctf_allow_res.inspect_err(|e| {
-                tracing::error!("CTF allowance poll failed for {eoa_str}: {e}");
-            }).unwrap_or_default();
-            let neg_allowance = neg_allow_res.inspect_err(|e| {
-                tracing::error!("NegRisk allowance poll failed for {eoa_str}: {e}");
-            }).unwrap_or_default();
+            let ctf_allowance = ctf_allow_res
+                .inspect_err(|e| {
+                    tracing::error!("CTF allowance poll failed for {eoa_str}: {e}");
+                })
+                .unwrap_or_default();
+            let neg_allowance = neg_allow_res
+                .inspect_err(|e| {
+                    tracing::error!("NegRisk allowance poll failed for {eoa_str}: {e}");
+                })
+                .unwrap_or_default();
             let pol_wei = pol_gas_res.unwrap_or_default();
 
             if usdc_raw > alloy::primitives::U256::ZERO && usdc_raw < contracts::LOW_BALANCE_RAW {
@@ -404,7 +463,11 @@ async fn balance_poll_task(state: AppState) {
                 last_checked: std::time::Instant::now(),
             };
 
-            state.wallet_balances.write().await.insert(wallet_id.clone(), entry);
+            state
+                .wallet_balances
+                .write()
+                .await
+                .insert(wallet_id.clone(), entry);
         }
     }
 }

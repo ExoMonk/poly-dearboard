@@ -5,15 +5,13 @@ use std::time::{Duration, Instant};
 
 use rust_decimal::Decimal;
 use std::sync::Mutex;
-use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::sync::{RwLock, broadcast, mpsc};
 
 use alloy::signers::Signer as _;
 use polymarket_client_sdk::auth::state::Authenticated;
 use polymarket_client_sdk::auth::{Credentials, Normal};
 use polymarket_client_sdk::clob::types::request::PriceRequest;
-use polymarket_client_sdk::clob::types::{
-    Amount, OrderStatusType, OrderType, Side, SignatureType,
-};
+use polymarket_client_sdk::clob::types::{Amount, OrderStatusType, OrderType, Side, SignatureType};
 use polymarket_client_sdk::clob::{Client, Config};
 use polymarket_client_sdk::types::U256;
 
@@ -221,7 +219,11 @@ pub async fn copytrade_engine_loop(
                         db::get_session_positions(&conn, &session_row.id).unwrap_or_default()
                     };
                     if !positions.is_empty() {
-                        tracing::info!("Restored {} positions for session {}", positions.len(), session_row.id);
+                        tracing::info!(
+                            "Restored {} positions for session {}",
+                            positions.len(),
+                            session_row.id
+                        );
                     }
                     sessions.insert(
                         session_row.id.clone(),
@@ -508,7 +510,8 @@ async fn process_trade(
         }
         Side::Sell => {
             // For sells, size based on our position, not capital
-            let (cur_shares, _) = session.positions
+            let (cur_shares, _) = session
+                .positions
                 .get(&trade.asset_id)
                 .copied()
                 .unwrap_or((0.0, 0.0));
@@ -529,7 +532,11 @@ async fn process_trade(
 
     // 5. BALANCE (only check for buys — sells add capital)
     if matches!(side, Side::Buy) && session.remaining_capital < order_usdc {
-        tracing::warn!("Session {sid}: insufficient capital ({:.2} < {:.2})", session.remaining_capital, order_usdc);
+        tracing::warn!(
+            "Session {sid}: insufficient capital ({:.2} < {:.2})",
+            session.remaining_capital,
+            order_usdc
+        );
         if session.remaining_capital < MIN_ORDER_USDC {
             // Auto-pause on empty balance
             session.config.status = "paused".to_string();
@@ -551,8 +558,8 @@ async fn process_trade(
         return;
     }
 
-    let order_type = CopyOrderType::from_str(&session.config.order_type)
-        .unwrap_or(CopyOrderType::FOK);
+    let order_type =
+        CopyOrderType::from_str(&session.config.order_type).unwrap_or(CopyOrderType::FOK);
 
     // 7. SLIPPAGE CHECK + 8. EXECUTE
     let order_id = uuid::Uuid::new_v4().to_string();
@@ -560,14 +567,31 @@ async fn process_trade(
 
     let submitted = if session.config.simulate {
         execute_simulated(
-            trade, session, order_usdc, source_price, side, &order_id, &created_at,
-            clob_client, user_db, update_tx,
+            trade,
+            session,
+            order_usdc,
+            source_price,
+            side,
+            &order_id,
+            &created_at,
+            clob_client,
+            user_db,
+            update_tx,
         )
         .await
     } else {
         execute_live(
-            trade, session, order_usdc, source_price, side, order_type,
-            &order_id, &created_at, clob_client, user_db, update_tx,
+            trade,
+            session,
+            order_usdc,
+            source_price,
+            side,
+            order_type,
+            &order_id,
+            &created_at,
+            clob_client,
+            user_db,
+            update_tx,
         )
         .await
     };
@@ -635,16 +659,20 @@ async fn execute_simulated(
             actual_usdc = order_usdc;
             actual_shares = size_shares;
             session.remaining_capital -= actual_usdc;
-            let (cur_shares, _) = session.positions
+            let (cur_shares, _) = session
+                .positions
                 .get(&trade.asset_id)
                 .copied()
                 .unwrap_or((0.0, 0.0));
             let new_shares = cur_shares + actual_shares;
-            session.positions.insert(trade.asset_id.clone(), (new_shares, fill_price));
+            session
+                .positions
+                .insert(trade.asset_id.clone(), (new_shares, fill_price));
         }
         Side::Sell => {
             // Sell: only if we hold shares in this asset
-            let (cur_shares, _) = session.positions
+            let (cur_shares, _) = session
+                .positions
                 .get(&trade.asset_id)
                 .copied()
                 .unwrap_or((0.0, 0.0));
@@ -660,7 +688,9 @@ async fn execute_simulated(
             if new_shares < 0.001 {
                 session.positions.remove(&trade.asset_id);
             } else {
-                session.positions.insert(trade.asset_id.clone(), (new_shares, fill_price));
+                session
+                    .positions
+                    .insert(trade.asset_id.clone(), (new_shares, fill_price));
             }
         }
         _ => return false,
@@ -698,7 +728,13 @@ async fn execute_simulated(
 
     tracing::info!(
         "SIM {sid}: {} {:.2} USDC ({:.4} shares) on {} @ {:.4} (source {:.4}, slippage {:.0}bps)",
-        trade.side, actual_usdc, actual_shares, trade.asset_id, fill_price, source_price, slippage_bps
+        trade.side,
+        actual_usdc,
+        actual_shares,
+        trade.asset_id,
+        fill_price,
+        source_price,
+        slippage_bps
     );
 
     // Broadcast updates
@@ -751,7 +787,10 @@ async fn execute_live(
     let current_price = match fetch_clob_price(clob_client, &trade.asset_id, side).await {
         Some(p) => p,
         None => {
-            tracing::warn!("Session {sid}: couldn't fetch CLOB price for {}, skipping", trade.asset_id);
+            tracing::warn!(
+                "Session {sid}: couldn't fetch CLOB price for {}, skipping",
+                trade.asset_id
+            );
             return false;
         }
     };
@@ -800,8 +839,16 @@ async fn execute_live(
         Some(cs) => cs,
         None => {
             record_failed_order(
-                order_id, &sid, trade, source_price, order_usdc, created_at,
-                "CLOB client not initialized", session, user_db, update_tx,
+                order_id,
+                &sid,
+                trade,
+                source_price,
+                order_usdc,
+                created_at,
+                "CLOB client not initialized",
+                session,
+                user_db,
+                update_tx,
             )
             .await;
             return false;
@@ -817,8 +864,16 @@ async fn execute_live(
                 Ok(a) => a,
                 Err(e) => {
                     record_failed_order(
-                        order_id, &sid, trade, source_price, order_usdc, created_at,
-                        &format!("Invalid amount: {e}"), session, user_db, update_tx,
+                        order_id,
+                        &sid,
+                        trade,
+                        source_price,
+                        order_usdc,
+                        created_at,
+                        &format!("Invalid amount: {e}"),
+                        session,
+                        user_db,
+                        update_tx,
                     )
                     .await;
                     return false;
@@ -887,12 +942,20 @@ async fn execute_live(
             match resp.status {
                 OrderStatusType::Matched => {
                     // FOK filled — compute price per share (USDC/share)
-                    fill_price_val = if resp.taking_amount > Decimal::ZERO && resp.making_amount > Decimal::ZERO {
+                    fill_price_val = if resp.taking_amount > Decimal::ZERO
+                        && resp.making_amount > Decimal::ZERO
+                    {
                         let fp = match side {
                             // Buy: making=USDC sent, taking=shares received
-                            Side::Buy => resp.making_amount.to_f64().unwrap_or(0.0) / resp.taking_amount.to_f64().unwrap_or(1.0),
+                            Side::Buy => {
+                                resp.making_amount.to_f64().unwrap_or(0.0)
+                                    / resp.taking_amount.to_f64().unwrap_or(1.0)
+                            }
                             // Sell: taking=USDC received, making=shares sent
-                            _ => resp.taking_amount.to_f64().unwrap_or(0.0) / resp.making_amount.to_f64().unwrap_or(1.0),
+                            _ => {
+                                resp.taking_amount.to_f64().unwrap_or(0.0)
+                                    / resp.making_amount.to_f64().unwrap_or(1.0)
+                            }
                         };
                         Some(fp)
                     } else {
@@ -903,7 +966,8 @@ async fn execute_live(
                         _ => resp.making_amount.to_f64().unwrap_or(0.0),
                     };
                     size_shares = Some(shares_filled);
-                    actual_slippage = fill_price_val.map(|fp| ((fp - source_price) / source_price * 10000.0).abs());
+                    actual_slippage = fill_price_val
+                        .map(|fp| ((fp - source_price) / source_price * 10000.0).abs());
                     status_str = OrderStatus::Filled.as_str();
                     let fp = fill_price_val.unwrap_or(current_price);
                     // Position-aware capital tracking
@@ -911,17 +975,21 @@ async fn execute_live(
                         Side::Buy => {
                             let usdc_spent = resp.making_amount.to_f64().unwrap_or(order_usdc);
                             session.remaining_capital -= usdc_spent;
-                            let (cur_shares, _) = session.positions
+                            let (cur_shares, _) = session
+                                .positions
                                 .get(&trade.asset_id)
                                 .copied()
                                 .unwrap_or((0.0, 0.0));
                             let new_shares = cur_shares + shares_filled;
-                            session.positions.insert(trade.asset_id.clone(), (new_shares, fp));
+                            session
+                                .positions
+                                .insert(trade.asset_id.clone(), (new_shares, fp));
                         }
                         _ => {
                             let usdc_received = resp.taking_amount.to_f64().unwrap_or(order_usdc);
                             session.remaining_capital += usdc_received;
-                            let (cur_shares, _) = session.positions
+                            let (cur_shares, _) = session
+                                .positions
                                 .get(&trade.asset_id)
                                 .copied()
                                 .unwrap_or((0.0, 0.0));
@@ -929,7 +997,9 @@ async fn execute_live(
                             if new_shares < 0.001 {
                                 session.positions.remove(&trade.asset_id);
                             } else {
-                                session.positions.insert(trade.asset_id.clone(), (new_shares, fp));
+                                session
+                                    .positions
+                                    .insert(trade.asset_id.clone(), (new_shares, fp));
                             }
                         }
                     }
@@ -944,9 +1014,10 @@ async fn execute_live(
                     if matches!(side, Side::Buy) {
                         session.remaining_capital -= order_usdc;
                     }
-                    session
-                        .open_gtc_orders
-                        .insert(resp.order_id.clone(), (order_id.to_string(), Instant::now(), order_usdc));
+                    session.open_gtc_orders.insert(
+                        resp.order_id.clone(),
+                        (order_id.to_string(), Instant::now(), order_usdc),
+                    );
                 }
                 OrderStatusType::Canceled | OrderStatusType::Unmatched => {
                     // FOK rejected — no fill
@@ -993,7 +1064,10 @@ async fn execute_live(
 
             tracing::info!(
                 "Session {sid}: {status_str} {} {:.2} USDC on {} (CLOB order {})",
-                trade.side, order_usdc, trade.asset_id, resp.order_id
+                trade.side,
+                order_usdc,
+                trade.asset_id,
+                resp.order_id
             );
 
             if status_str == OrderStatus::Filled.as_str() {
@@ -1010,18 +1084,36 @@ async fn execute_live(
             true
         }
         Ok(resp) => {
-            let error = resp.error_msg.unwrap_or_else(|| "Unknown CLOB error".into());
+            let error = resp
+                .error_msg
+                .unwrap_or_else(|| "Unknown CLOB error".into());
             record_failed_order(
-                order_id, &sid, trade, source_price, order_usdc, created_at,
-                &error, session, user_db, update_tx,
+                order_id,
+                &sid,
+                trade,
+                source_price,
+                order_usdc,
+                created_at,
+                &error,
+                session,
+                user_db,
+                update_tx,
             )
             .await;
             false
         }
         Err(e) => {
             record_failed_order(
-                order_id, &sid, trade, source_price, order_usdc, created_at,
-                &e.to_string(), session, user_db, update_tx,
+                order_id,
+                &sid,
+                trade,
+                source_price,
+                order_usdc,
+                created_at,
+                &e.to_string(),
+                session,
+                user_db,
+                update_tx,
             )
             .await;
             false
@@ -1041,7 +1133,10 @@ async fn fetch_clob_price(
     let token_id = U256::from_str(asset_id).ok()?;
     let clob = clob_client.read().await;
     let cs = clob.as_ref()?;
-    let req = PriceRequest::builder().token_id(token_id).side(side).build();
+    let req = PriceRequest::builder()
+        .token_id(token_id)
+        .side(side)
+        .build();
     let resp = cs.client.price(&req).await.ok()?;
     resp.price.to_f64()
 }
@@ -1118,9 +1213,7 @@ fn publish_tracked_addresses(
 ) {
     let union: std::collections::HashSet<String> = sessions
         .values()
-        .filter(|s| {
-            SessionStatus::from_str(&s.config.status) == Some(SessionStatus::Running)
-        })
+        .filter(|s| SessionStatus::from_str(&s.config.status) == Some(SessionStatus::Running))
         .flat_map(|s| s.traders.iter().cloned())
         .map(|addr| addr.to_lowercase())
         .collect();
@@ -1156,7 +1249,9 @@ async fn health_check(
         if let Some(max_loss_pct) = session.config.max_loss_pct {
             // Unrealized value = sum(shares * last_fill_price)
             // Uses the most recent fill price per asset as best available estimate
-            let unrealized_value: f64 = session.positions.values()
+            let unrealized_value: f64 = session
+                .positions
+                .values()
                 .map(|(shares, last_price)| shares * last_price)
                 .sum();
             let total_value = session.remaining_capital + unrealized_value;
@@ -1165,7 +1260,8 @@ async fn health_check(
             if loss_pct > max_loss_pct {
                 tracing::error!(
                     "Session {sid} auto-stopped: loss {loss_pct:.1}% exceeds max {max_loss_pct:.1}% (cash={:.2}, positions={:.2})",
-                    session.remaining_capital, unrealized_value
+                    session.remaining_capital,
+                    unrealized_value
                 );
                 to_stop.push((
                     sid.clone(),
@@ -1206,7 +1302,10 @@ async fn health_check(
                         );
                     }
                 }
-                tracing::info!("Canceled {} expired GTC orders for session {sid}", resp.canceled.len());
+                tracing::info!(
+                    "Canceled {} expired GTC orders for session {sid}",
+                    resp.canceled.len()
+                );
             } else if let Some(Err(e)) = cancel_result {
                 tracing::warn!("Failed to cancel expired GTC orders: {e}");
             }
@@ -1221,7 +1320,8 @@ async fn health_check(
             if !session.open_gtc_orders.is_empty() {
                 let clob = clob_client.read().await;
                 if let Some(ref cs) = *clob {
-                    let ids: Vec<&str> = session.open_gtc_orders.keys().map(|s| s.as_str()).collect();
+                    let ids: Vec<&str> =
+                        session.open_gtc_orders.keys().map(|s| s.as_str()).collect();
                     let _ = cs.client.cancel_orders(&ids).await;
                 }
             }

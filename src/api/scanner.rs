@@ -110,7 +110,11 @@ async fn rpc_call<T: serde::de::DeserializeOwned>(
         .map_err(|e| format!("RPC read body failed: {e}"))?;
 
     let body: RpcResponse<T> = serde_json::from_str(&text).map_err(|e| {
-        let preview = if text.len() > 200 { &text[..200] } else { &text };
+        let preview = if text.len() > 200 {
+            &text[..200]
+        } else {
+            &text
+        };
         format!("RPC parse failed: {e} — body: {preview}")
     })?;
 
@@ -138,11 +142,7 @@ async fn get_block(http: &reqwest::Client, url: &str, number: u64) -> Result<Blo
     .await
 }
 
-async fn get_receipt(
-    http: &reqwest::Client,
-    url: &str,
-    tx_hash: &str,
-) -> Result<Receipt, String> {
+async fn get_receipt(http: &reqwest::Client, url: &str, tx_hash: &str) -> Result<Receipt, String> {
     rpc_call(
         http,
         url,
@@ -217,12 +217,10 @@ async fn scan_block(
         .transactions
         .iter()
         .filter(|tx| {
-            tx.to
-                .as_ref()
-                .is_some_and(|to| {
-                    let lower = to.to_lowercase();
-                    lower == CTF_EXCHANGE || lower == NEG_RISK_EXCHANGE
-                })
+            tx.to.as_ref().is_some_and(|to| {
+                let lower = to.to_lowercase();
+                lower == CTF_EXCHANGE || lower == NEG_RISK_EXCHANGE
+            })
         })
         .collect();
 
@@ -239,11 +237,7 @@ async fn scan_block(
 
         // status "0x0" = reverted
         if receipt.status.as_deref() == Some("0x0") {
-            let to_lower = tx
-                .to
-                .as_deref()
-                .unwrap_or("")
-                .to_lowercase();
+            let to_lower = tx.to.as_deref().unwrap_or("").to_lowercase();
             let contract_name = if to_lower == NEG_RISK_EXCHANGE {
                 "neg_risk"
             } else {

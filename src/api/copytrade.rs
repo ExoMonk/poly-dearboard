@@ -23,22 +23,40 @@ pub async fn create_session(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     // Validate config
     if req.copy_pct < 0.05 || req.copy_pct > 1.0 {
-        return Err((StatusCode::BAD_REQUEST, "copy_pct must be between 0.05 and 1.0".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "copy_pct must be between 0.05 and 1.0".into(),
+        ));
     }
     if req.initial_capital <= 0.0 {
-        return Err((StatusCode::BAD_REQUEST, "initial_capital must be positive".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "initial_capital must be positive".into(),
+        ));
     }
     if req.max_position_usdc <= 0.0 {
-        return Err((StatusCode::BAD_REQUEST, "max_position_usdc must be positive".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "max_position_usdc must be positive".into(),
+        ));
     }
     if req.list_id.is_some() && req.top_n.is_some() {
-        return Err((StatusCode::BAD_REQUEST, "Specify list_id or top_n, not both".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Specify list_id or top_n, not both".into(),
+        ));
     }
     if req.list_id.is_none() && req.top_n.is_none() {
-        return Err((StatusCode::BAD_REQUEST, "Specify either list_id or top_n".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Specify either list_id or top_n".into(),
+        ));
     }
     if CopyOrderType::from_str(&req.order_type).is_none() {
-        return Err((StatusCode::BAD_REQUEST, "order_type must be FOK or GTC".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "order_type must be FOK or GTC".into(),
+        ));
     }
 
     // If not simulation, require funded wallet with CLOB credentials
@@ -50,7 +68,10 @@ pub async fn create_session(
         };
         let has_credentialed = wallets.iter().any(|w| w.clob_api_key.is_some());
         if !has_credentialed {
-            return Err((StatusCode::BAD_REQUEST, "No wallet with CLOB credentials. Derive credentials first.".into()));
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "No wallet with CLOB credentials. Derive credentials first.".into(),
+            ));
         }
     }
 
@@ -158,29 +179,57 @@ pub async fn update_session(
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     };
     let row = row.ok_or((StatusCode::NOT_FOUND, "Session not found".into()))?;
-    let current = SessionStatus::from_str(&row.status)
-        .ok_or((StatusCode::INTERNAL_SERVER_ERROR, "Invalid session status".into()))?;
+    let current = SessionStatus::from_str(&row.status).ok_or((
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "Invalid session status".into(),
+    ))?;
 
     let (new_status, cmd) = match req.action.as_str() {
         "pause" => {
             if current != SessionStatus::Running {
-                return Err((StatusCode::BAD_REQUEST, "Can only pause a running session".into()));
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "Can only pause a running session".into(),
+                ));
             }
-            ("paused", CopyTradeCommand::Pause { session_id: id.clone() })
+            (
+                "paused",
+                CopyTradeCommand::Pause {
+                    session_id: id.clone(),
+                },
+            )
         }
         "resume" => {
             if current != SessionStatus::Paused {
-                return Err((StatusCode::BAD_REQUEST, "Can only resume a paused session".into()));
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "Can only resume a paused session".into(),
+                ));
             }
-            ("running", CopyTradeCommand::Resume { session_id: id.clone() })
+            (
+                "running",
+                CopyTradeCommand::Resume {
+                    session_id: id.clone(),
+                },
+            )
         }
         "stop" => {
             if current == SessionStatus::Stopped {
                 return Err((StatusCode::BAD_REQUEST, "Session already stopped".into()));
             }
-            ("stopped", CopyTradeCommand::Stop { session_id: id.clone() })
+            (
+                "stopped",
+                CopyTradeCommand::Stop {
+                    session_id: id.clone(),
+                },
+            )
         }
-        _ => return Err((StatusCode::BAD_REQUEST, "action must be pause, resume, or stop".into())),
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "action must be pause, resume, or stop".into(),
+            ));
+        }
     };
 
     // Update DB immediately
@@ -256,7 +305,10 @@ pub async fn delete_session(
     };
     let row = row.ok_or((StatusCode::NOT_FOUND, "Session not found".into()))?;
     if row.status != "stopped" {
-        return Err((StatusCode::CONFLICT, "Session must be stopped before deletion".into()));
+        return Err((
+            StatusCode::CONFLICT,
+            "Session must be stopped before deletion".into(),
+        ));
     }
 
     let deleted = {
@@ -300,7 +352,10 @@ pub async fn close_position(
     };
 
     if net_shares <= 0.0 {
-        return Err((StatusCode::BAD_REQUEST, format!("No shares to close (net: {net_shares:.2})")));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("No shares to close (net: {net_shares:.2})"),
+        ));
     }
 
     // For simulation sessions, simulate the close
@@ -316,7 +371,12 @@ pub async fn close_position(
         };
         let fill_price = match last_fill {
             Some(p) if p > 0.0 => p,
-            _ => return Err((StatusCode::BAD_REQUEST, "No fill price available for this asset. Cannot close position.".into())),
+            _ => {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "No fill price available for this asset. Cannot close position.".into(),
+                ));
+            }
         };
 
         let size_usdc = net_shares * fill_price;
@@ -352,19 +412,21 @@ pub async fn close_position(
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         }
 
-        let _ = state.copytrade_update_tx.send(CopyTradeUpdate::OrderPlaced {
-            session_id: req.session_id.clone(),
-            order: CopyTradeOrderSummary {
-                id: order_id.clone(),
-                asset_id: req.asset_id.clone(),
-                side: "sell".to_string(),
-                size_usdc,
-                price: fill_price,
-                source_trader: owner,
-                simulate: true,
-            },
-            owner: session_row.owner.clone(),
-        });
+        let _ = state
+            .copytrade_update_tx
+            .send(CopyTradeUpdate::OrderPlaced {
+                session_id: req.session_id.clone(),
+                order: CopyTradeOrderSummary {
+                    id: order_id.clone(),
+                    asset_id: req.asset_id.clone(),
+                    side: "sell".to_string(),
+                    size_usdc,
+                    price: fill_price,
+                    source_trader: owner,
+                    simulate: true,
+                },
+                owner: session_row.owner.clone(),
+            });
 
         return Ok(Json(serde_json::json!({
             "order_id": order_id,
@@ -376,9 +438,10 @@ pub async fn close_position(
 
     // Live close: place FOK sell via CLOB
     let clob = state.clob_client.read().await;
-    let cs = clob
-        .as_ref()
-        .ok_or((StatusCode::SERVICE_UNAVAILABLE, "CLOB client not initialized".into()))?;
+    let cs = clob.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "CLOB client not initialized".into(),
+    ))?;
 
     let token_id = polymarket_client_sdk::types::U256::from_str(&req.asset_id)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid asset_id: {e}")))?;
@@ -386,8 +449,12 @@ pub async fn close_position(
     let shares_dec = Decimal::from_f64_retain(net_shares)
         .unwrap_or(Decimal::ZERO)
         .trunc_with_scale(2);
-    let amount = Amount::shares(shares_dec)
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid shares amount: {e}")))?;
+    let amount = Amount::shares(shares_dec).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid shares amount: {e}"),
+        )
+    })?;
 
     let signable = cs
         .client
@@ -398,13 +465,19 @@ pub async fn close_position(
         .order_type(OrderType::FOK)
         .build()
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Order build failed: {e}")))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Order build failed: {e}"),
+            )
+        })?;
 
-    let signed = cs
-        .client
-        .sign(&cs.signer, signable)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Sign failed: {e}")))?;
+    let signed = cs.client.sign(&cs.signer, signable).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Sign failed: {e}"),
+        )
+    })?;
 
     let resp = cs
         .client
@@ -417,7 +490,9 @@ pub async fn close_position(
     // Record order
     let order_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
-    let status = if resp.success && resp.status == polymarket_client_sdk::clob::types::OrderStatusType::Matched {
+    let status = if resp.success
+        && resp.status == polymarket_client_sdk::clob::types::OrderStatusType::Matched
+    {
         "filled"
     } else {
         "failed"
@@ -446,7 +521,11 @@ pub async fn close_position(
         size_shares: Some(net_shares),
         status: status.to_string(),
         error_message: resp.error_msg.clone(),
-        fill_price: if status == "filled" { Some(fill_price) } else { None },
+        fill_price: if status == "filled" {
+            Some(fill_price)
+        } else {
+            None
+        },
         slippage_bps: None,
         tx_hash: resp.transaction_hashes.first().map(|h| h.to_string()),
         created_at: now.clone(),
@@ -499,12 +578,19 @@ pub async fn get_session_stats(
     let mut loss_count: u32 = 0;
 
     for pos in &positions {
-        let cost_per_share = if pos.buy_shares > 0.0 { pos.cost_basis / pos.buy_shares } else { 0.0 };
+        let cost_per_share = if pos.buy_shares > 0.0 {
+            pos.cost_basis / pos.buy_shares
+        } else {
+            0.0
+        };
         let pos_realized = pos.sell_proceeds - (pos.sell_shares * cost_per_share);
         realized_pnl += pos_realized;
 
         // Use live CLOB price when available, fall back to last fill price
-        let live_price = clob_prices.get(&pos.asset_id).copied().unwrap_or(pos.last_fill_price);
+        let live_price = clob_prices
+            .get(&pos.asset_id)
+            .copied()
+            .unwrap_or(pos.last_fill_price);
 
         if pos.net_shares > 0.001 {
             let remaining_cost = pos.net_shares * cost_per_share;
@@ -531,7 +617,11 @@ pub async fn get_session_stats(
         0.0
     };
     let win_total = win_count + loss_count;
-    let win_rate = if win_total > 0 { (win_count as f64 / win_total as f64) * 100.0 } else { 0.0 };
+    let win_rate = if win_total > 0 {
+        (win_count as f64 / win_total as f64) * 100.0
+    } else {
+        0.0
+    };
 
     let capital_utilization = if session_row.initial_capital > 0.0 {
         (session_row.initial_capital - session_row.remaining_capital) / session_row.initial_capital
@@ -594,9 +684,16 @@ pub async fn get_session_positions(
         .into_iter()
         .map(|p| {
             let info = market_info.get(&p.asset_id);
-            let cost_per_share = if p.buy_shares > 0.0 { p.cost_basis / p.buy_shares } else { 0.0 };
+            let cost_per_share = if p.buy_shares > 0.0 {
+                p.cost_basis / p.buy_shares
+            } else {
+                0.0
+            };
             // Use live CLOB price when available, fall back to last fill price
-            let live_price = clob_prices.get(&p.asset_id).copied().unwrap_or(p.last_fill_price);
+            let live_price = clob_prices
+                .get(&p.asset_id)
+                .copied()
+                .unwrap_or(p.last_fill_price);
             let current_value = p.net_shares * live_price;
             let remaining_cost = p.net_shares * cost_per_share;
             let pos_realized = p.sell_proceeds - (p.sell_shares * cost_per_share);
@@ -617,7 +714,8 @@ pub async fn get_session_positions(
                 unrealized_pnl: current_value - remaining_cost,
                 realized_pnl: pos_realized,
                 order_count: p.order_count,
-                source_traders: p.source_traders
+                source_traders: p
+                    .source_traders
                     .split(',')
                     .filter(|s| !s.is_empty())
                     .map(|s| s.to_string())
@@ -675,11 +773,18 @@ pub async fn get_summary(
     for (initial_capital, positions) in &all_positions {
         let mut session_pnl = 0.0;
         for pos in positions {
-            let cost_per_share = if pos.buy_shares > 0.0 { pos.cost_basis / pos.buy_shares } else { 0.0 };
+            let cost_per_share = if pos.buy_shares > 0.0 {
+                pos.cost_basis / pos.buy_shares
+            } else {
+                0.0
+            };
             let pos_realized = pos.sell_proceeds - (pos.sell_shares * cost_per_share);
             session_pnl += pos_realized;
 
-            let live_price = clob_prices.get(&pos.asset_id).copied().unwrap_or(pos.last_fill_price);
+            let live_price = clob_prices
+                .get(&pos.asset_id)
+                .copied()
+                .unwrap_or(pos.last_fill_price);
             if pos.net_shares > 0.001 {
                 let remaining_cost = pos.net_shares * cost_per_share;
                 let current_value = pos.net_shares * live_price;

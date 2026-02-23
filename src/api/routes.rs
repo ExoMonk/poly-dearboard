@@ -7,10 +7,10 @@ use axum::{
 
 use serde::Deserialize;
 
-use super::{db, markets, middleware};
 use super::middleware::AuthUser;
 use super::server::AppState;
 use super::types::*;
+use super::{db, markets, middleware};
 
 const ALLOWED_SORT_COLUMNS: &[&str] = &["realized_pnl", "total_volume", "trade_count"];
 
@@ -67,14 +67,17 @@ pub async fn warm_leaderboard(state: &AppState) -> Result<(), String> {
         LIMIT ? OFFSET ?"
     );
 
-    let traders = state.db.query(&query)
+    let traders = state
+        .db
+        .query(&query)
         .bind(limit)
         .bind(offset)
         .fetch_all::<TraderSummary>()
         .await
         .map_err(|e| e.to_string())?;
 
-    let total: u64 = state.db
+    let total: u64 = state
+        .db
         .query("SELECT uniqExactMerge(unique_traders) FROM poly_dearboard.global_stats")
         .fetch_one()
         .await
@@ -84,18 +87,33 @@ pub async fn warm_leaderboard(state: &AppState) -> Result<(), String> {
     let (labels, label_details) = match tokio::time::timeout(
         std::time::Duration::from_secs(2),
         batch_compute_labels(state, &addresses),
-    ).await {
+    )
+    .await
+    {
         Ok(pair) => pair,
-        Err(_) => (std::collections::HashMap::new(), std::collections::HashMap::new()),
+        Err(_) => (
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+        ),
     };
 
-    let response = LeaderboardResponse { traders, total, limit, offset, labels, label_details };
+    let response = LeaderboardResponse {
+        traders,
+        total,
+        limit,
+        offset,
+        labels,
+        label_details,
+    };
 
     let mut cache = state.leaderboard_cache.write().await;
-    cache.insert(cache_key, super::server::CachedResponse {
-        data: response,
-        expires: std::time::Instant::now() + std::time::Duration::from_secs(30),
-    });
+    cache.insert(
+        cache_key,
+        super::server::CachedResponse {
+            data: response,
+            expires: std::time::Instant::now() + std::time::Duration::from_secs(30),
+        },
+    );
 
     tracing::debug!("leaderboard cache warmed");
     Ok(())
@@ -141,7 +159,9 @@ pub async fn leaderboard(
     let (traders, total) = if timeframe == "all" {
         // All-time: read from pre-aggregated trader_positions table
         let sort_expr = match sort {
-            "realized_pnl" => "sum((p.sell_usdc - p.buy_usdc) + (p.buy_amount - p.sell_amount) * coalesce(rp.resolved_price, toFloat64(lp.latest_price)))",
+            "realized_pnl" => {
+                "sum((p.sell_usdc - p.buy_usdc) + (p.buy_amount - p.sell_amount) * coalesce(rp.resolved_price, toFloat64(lp.latest_price)))"
+            }
             "total_volume" => "sum(p.total_volume)",
             "trade_count" => "sum(p.trade_count)",
             _ => unreachable!(),
@@ -196,7 +216,9 @@ pub async fn leaderboard(
         };
 
         let sort_expr = match sort {
-            "realized_pnl" => "sum(p.cash_flow + p.net_tokens * coalesce(rp.resolved_price, toFloat64(lp.latest_price)))",
+            "realized_pnl" => {
+                "sum(p.cash_flow + p.net_tokens * coalesce(rp.resolved_price, toFloat64(lp.latest_price)))"
+            }
             "total_volume" => "sum(p.volume)",
             "trade_count" => "sum(p.trades)",
             _ => unreachable!(),
@@ -271,7 +293,10 @@ pub async fn leaderboard(
         Ok(pair) => pair,
         Err(_) => {
             tracing::warn!("batch_compute_labels timed out after 2s");
-            (std::collections::HashMap::new(), std::collections::HashMap::new())
+            (
+                std::collections::HashMap::new(),
+                std::collections::HashMap::new(),
+            )
         }
     };
 
@@ -443,7 +468,7 @@ pub async fn hot_markets(
                 WHERE day >= today() - 7
                 GROUP BY asset_id
                 ORDER BY sum(asd.volume) DESC
-                LIMIT ?"
+                LIMIT ?",
             )
             .bind(fetch_limit)
             .fetch_all::<MarketStatsRow>()
@@ -487,8 +512,7 @@ pub async fn hot_markets(
         markets::resolve_markets(&state.http, &state.db, &state.market_cache, &token_ids).await;
 
     // Merge tokens belonging to the same event (Yes/No → one row)
-    let mut merged: std::collections::HashMap<String, HotMarket> =
-        std::collections::HashMap::new();
+    let mut merged: std::collections::HashMap<String, HotMarket> = std::collections::HashMap::new();
 
     for r in rows {
         let info = market_info.get(&r.asset_id);
@@ -676,7 +700,7 @@ pub async fn health(
                 sum(trade_count) AS trade_count,
                 uniqExactMerge(unique_traders) AS trader_count,
                 max(latest_block) AS latest_block
-            FROM poly_dearboard.global_stats"
+            FROM poly_dearboard.global_stats",
         )
         .fetch_one::<HealthStats>()
         .await
@@ -931,7 +955,12 @@ async fn fetch_resolved_prices(state: &AppState) -> std::collections::HashMap<St
         .await
         .unwrap_or_default()
         .into_iter()
-        .filter_map(|r| r.resolved_price.parse::<f64>().ok().map(|p| (r.asset_id, p)))
+        .filter_map(|r| {
+            r.resolved_price
+                .parse::<f64>()
+                .ok()
+                .map(|p| (r.asset_id, p))
+        })
         .collect()
 }
 
@@ -1002,7 +1031,8 @@ pub async fn resolve_market(
         return Err((StatusCode::BAD_REQUEST, "token_ids required".to_string()));
     }
 
-    let info = markets::resolve_markets(&state.http, &state.db, &state.market_cache, &token_ids).await;
+    let info =
+        markets::resolve_markets(&state.http, &state.db, &state.market_cache, &token_ids).await;
 
     let mut resolved: std::collections::HashMap<String, ResolvedMarket> =
         std::collections::HashMap::new();
@@ -1057,7 +1087,9 @@ pub async fn auth_nonce(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    Ok(Json(serde_json::json!({ "nonce": nonce, "issuedAt": issued_at })))
+    Ok(Json(
+        serde_json::json!({ "nonce": nonce, "issuedAt": issued_at }),
+    ))
 }
 
 pub async fn auth_verify(
@@ -1091,7 +1123,9 @@ pub async fn auth_verify(
     .map_err(|_| super::auth::AuthError::InvalidToken)??;
 
     let address = body.address.to_lowercase();
-    Ok(Json(serde_json::json!({ "token": token, "address": address })))
+    Ok(Json(
+        serde_json::json!({ "token": token, "address": address }),
+    ))
 }
 
 pub async fn smart_money(
@@ -1493,7 +1527,10 @@ pub async fn trader_profile(
 async fn batch_compute_labels(
     state: &AppState,
     addresses: &[String],
-) -> (std::collections::HashMap<String, Vec<BehavioralLabel>>, std::collections::HashMap<String, LabelDetails>) {
+) -> (
+    std::collections::HashMap<String, Vec<BehavioralLabel>>,
+    std::collections::HashMap<String, LabelDetails>,
+) {
     let mut result = std::collections::HashMap::new();
     let mut details_map = std::collections::HashMap::new();
     if addresses.is_empty() {
@@ -1736,54 +1773,53 @@ fn compute_labels(
     };
 
     // Category dominance
-    let (dominant_category, dominant_pct, cat_win_rate) = if !category_breakdown.is_empty()
-        && total_volume > 0.0
-    {
-        let top = &category_breakdown[0]; // already sorted by volume desc
-        let top_vol: f64 = top.volume.parse().unwrap_or(0.0);
-        let pct = (top_vol / total_volume) * 100.0;
+    let (dominant_category, dominant_pct, cat_win_rate) =
+        if !category_breakdown.is_empty() && total_volume > 0.0 {
+            let top = &category_breakdown[0]; // already sorted by volume desc
+            let top_vol: f64 = top.volume.parse().unwrap_or(0.0);
+            let pct = (top_vol / total_volume) * 100.0;
 
-        // Category win rate from settled positions in this category
-        let mut cat_settled = 0u64;
-        let mut cat_correct = 0u64;
-        for p in positions {
-            let lp: f64 = p.latest_price.parse().unwrap_or(0.5);
-            let is_settled = p.on_chain_resolved == 1 || lp >= 0.95 || lp <= 0.05;
-            if !is_settled {
-                continue;
+            // Category win rate from settled positions in this category
+            let mut cat_settled = 0u64;
+            let mut cat_correct = 0u64;
+            for p in positions {
+                let lp: f64 = p.latest_price.parse().unwrap_or(0.5);
+                let is_settled = p.on_chain_resolved == 1 || lp >= 0.95 || lp <= 0.05;
+                if !is_settled {
+                    continue;
+                }
+                let cat = market_info
+                    .get(&p.asset_id)
+                    .map(|i| i.category.as_str())
+                    .unwrap_or("Unknown");
+                if cat != top.category {
+                    continue;
+                }
+                let effective_price: f64 = if p.on_chain_resolved == 1 {
+                    p.resolved_price.parse().unwrap_or(0.5)
+                } else if lp >= 0.95 {
+                    1.0
+                } else {
+                    0.0
+                };
+                let net: f64 = p.net_tokens.parse().unwrap_or(0.0);
+                if net.abs() < 1e-9 {
+                    continue;
+                }
+                cat_settled += 1;
+                if (net > 0.0 && effective_price > 0.5) || (net < 0.0 && effective_price < 0.5) {
+                    cat_correct += 1;
+                }
             }
-            let cat = market_info
-                .get(&p.asset_id)
-                .map(|i| i.category.as_str())
-                .unwrap_or("Unknown");
-            if cat != top.category {
-                continue;
-            }
-            let effective_price: f64 = if p.on_chain_resolved == 1 {
-                p.resolved_price.parse().unwrap_or(0.5)
-            } else if lp >= 0.95 {
-                1.0
+            let cwr = if cat_settled > 0 {
+                (cat_correct as f64 / cat_settled as f64) * 100.0
             } else {
                 0.0
             };
-            let net: f64 = p.net_tokens.parse().unwrap_or(0.0);
-            if net.abs() < 1e-9 {
-                continue;
-            }
-            cat_settled += 1;
-            if (net > 0.0 && effective_price > 0.5) || (net < 0.0 && effective_price < 0.5) {
-                cat_correct += 1;
-            }
-        }
-        let cwr = if cat_settled > 0 {
-            (cat_correct as f64 / cat_settled as f64) * 100.0
+            (top.category.clone(), pct, cwr)
         } else {
-            0.0
+            (String::new(), 0.0, 0.0)
         };
-        (top.category.clone(), pct, cwr)
-    } else {
-        (String::new(), 0.0, 0.0)
-    };
 
     let avg_position = if unique_markets > 0 {
         total_volume / unique_markets as f64
@@ -1946,17 +1982,31 @@ pub async fn backtest(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     // Mutual-exclusion validation: exactly one of top_n or list_id
     if req.top_n.is_some() && req.list_id.is_some() {
-        return Err((StatusCode::BAD_REQUEST, "Specify list_id or top_n, not both".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Specify list_id or top_n, not both".into(),
+        ));
     }
     if req.top_n.is_none() && req.list_id.is_none() {
-        return Err((StatusCode::BAD_REQUEST, "Specify either list_id or top_n".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Specify either list_id or top_n".into(),
+        ));
     }
 
     let timeframe = match req.timeframe.as_str() {
         "7d" | "30d" | "all" => req.timeframe.as_str(),
-        _ => return Err((StatusCode::BAD_REQUEST, "timeframe must be 7d, 30d, or all".into())),
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "timeframe must be 7d, 30d, or all".into(),
+            ));
+        }
     };
-    let initial_capital = req.initial_capital.unwrap_or(10_000.0).clamp(100.0, 1_000_000.0);
+    let initial_capital = req
+        .initial_capital
+        .unwrap_or(10_000.0)
+        .clamp(100.0, 1_000_000.0);
     let copy_pct = req.copy_pct.unwrap_or(1.0).clamp(0.01, 1.0);
 
     // 1) Resolve trader addresses — from list or top-N
@@ -1966,16 +2016,21 @@ pub async fn backtest(
         let owner = user.0.clone();
         let addresses = {
             let conn = state.user_db.lock().unwrap_or_else(|p| p.into_inner());
-            db::get_list_member_addresses(&conn, list_id, &owner)
-                .map_err(|e| match e {
-                    db::ListError::NotFound => (StatusCode::NOT_FOUND, "List not found".into()),
-                    _ => (StatusCode::INTERNAL_SERVER_ERROR, "Failed to load list".into()),
-                })?
+            db::get_list_member_addresses(&conn, list_id, &owner).map_err(|e| match e {
+                db::ListError::NotFound => (StatusCode::NOT_FOUND, "List not found".into()),
+                _ => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Failed to load list".into(),
+                ),
+            })?
         };
         if addresses.is_empty() {
             return Err((StatusCode::BAD_REQUEST, "List has no members".into()));
         }
-        trader_rows = addresses.into_iter().map(|a| TopTraderRow { address: a }).collect();
+        trader_rows = addresses
+            .into_iter()
+            .map(|a| TopTraderRow { address: a })
+            .collect();
     } else {
         let top_n = req.top_n.unwrap().clamp(1, 50);
         let exclude = exclude_clause();
@@ -1993,7 +2048,9 @@ pub async fn backtest(
             ORDER BY sum((p.sell_usdc - p.buy_usdc) + (p.buy_amount - p.sell_amount) * coalesce(rp.resolved_price, toFloat64(lp.latest_price))) DESC
             LIMIT {top_n}"
         );
-        trader_rows = state.db.query(&top_query)
+        trader_rows = state
+            .db
+            .query(&top_query)
             .fetch_all::<TopTraderRow>()
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -2001,7 +2058,11 @@ pub async fn backtest(
 
     let top_n = trader_rows.len() as u32;
     let user_allocation = initial_capital * copy_pct;
-    let per_trader_budget = if top_n > 0 { user_allocation / top_n as f64 } else { 0.0 };
+    let per_trader_budget = if top_n > 0 {
+        user_allocation / top_n as f64
+    } else {
+        0.0
+    };
 
     let config = BacktestConfig {
         initial_capital,
@@ -2031,24 +2092,34 @@ pub async fn backtest(
         }));
     }
 
-    let addresses: Vec<String> = trader_rows.iter().map(|r| r.address.to_lowercase()).collect();
-    let in_list = addresses.iter().map(|a| format!("'{a}'")).collect::<Vec<_>>().join(",");
+    let addresses: Vec<String> = trader_rows
+        .iter()
+        .map(|r| r.address.to_lowercase())
+        .collect();
+    let in_list = addresses
+        .iter()
+        .map(|a| format!("'{a}'"))
+        .collect::<Vec<_>>()
+        .join(",");
 
     // 2) Fetch per-trader scaling data
-    let scale_rows = state.db.query(&format!(
-        "SELECT
+    let scale_rows = state
+        .db
+        .query(&format!(
+            "SELECT
             toString(p.trader) AS address,
             toString(ROUND(sum(p.buy_usdc) / count(), 6)) AS avg_position_size,
             count() AS market_count
         FROM poly_dearboard.trader_positions p
         WHERE lower(p.trader) IN ({in_list})
         GROUP BY p.trader"
-    ))
-    .fetch_all::<TraderScaleRow>()
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        ))
+        .fetch_all::<TraderScaleRow>()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let mut trader_scales: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    let mut trader_scales: std::collections::HashMap<String, f64> =
+        std::collections::HashMap::new();
     for row in &scale_rows {
         let avg_pos = row.avg_position_size.parse::<f64>().unwrap_or(1.0).max(1.0);
         let scale = per_trader_budget / avg_pos;
@@ -2067,8 +2138,10 @@ pub async fn backtest(
         std::collections::HashMap::new();
 
     if let Some(days) = day_filter {
-        let initial = state.db.query(&format!(
-            "SELECT
+        let initial = state
+            .db
+            .query(&format!(
+                "SELECT
                 toString(trader) AS trader,
                 asset_id,
                 toString(sum(buy_amount) - sum(sell_amount)) AS net_tokens,
@@ -2078,17 +2151,22 @@ pub async fn backtest(
             WHERE lower(trader) IN ({in_list})
               AND day < today() - {days}
             GROUP BY trader, asset_id"
-        ))
-        .fetch_all::<PnlInitialStateTraderRow>()
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            ))
+            .fetch_all::<PnlInitialStateTraderRow>()
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
         for row in initial {
-            let scale = trader_scales.get(&row.trader.to_lowercase()).copied().unwrap_or(1.0);
+            let scale = trader_scales
+                .get(&row.trader.to_lowercase())
+                .copied()
+                .unwrap_or(1.0);
             let tokens = row.net_tokens.parse::<f64>().unwrap_or(0.0) * scale;
             let cash = row.cash_flow.parse::<f64>().unwrap_or(0.0) * scale;
             let price = row.last_price.parse::<f64>().unwrap_or(0.0);
-            let entry = asset_state.entry(row.asset_id.clone()).or_insert((0.0, 0.0, 0.0));
+            let entry = asset_state
+                .entry(row.asset_id.clone())
+                .or_insert((0.0, 0.0, 0.0));
             entry.0 += tokens;
             entry.1 += cash;
             entry.2 = price;
@@ -2100,8 +2178,10 @@ pub async fn backtest(
         .map(|d| format!("AND day >= today() - {d}"))
         .unwrap_or_default();
 
-    let rows = state.db.query(&format!(
-        "SELECT
+    let rows = state
+        .db
+        .query(&format!(
+            "SELECT
             toString(trader) AS trader,
             toString(day) AS date,
             asset_id,
@@ -2113,29 +2193,42 @@ pub async fn backtest(
           {day_where}
         GROUP BY trader, day, asset_id
         ORDER BY day, trader, asset_id"
-    ))
-    .fetch_all::<PnlDailyTraderRow>()
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        ))
+        .fetch_all::<PnlDailyTraderRow>()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let resolved = fetch_resolved_prices(&state).await;
 
     // Simulate portfolio with scaling
     let portfolio_curve = simulate_portfolio(
-        &rows, &mut asset_state, &resolved, &trader_scales, initial_capital,
+        &rows,
+        &mut asset_state,
+        &resolved,
+        &trader_scales,
+        initial_capital,
     );
 
     // Also build raw PnL curve for backward compat
-    let pnl_curve: Vec<PnlChartPoint> = portfolio_curve.iter()
-        .map(|p| PnlChartPoint { date: p.date.clone(), pnl: p.pnl.clone() })
+    let pnl_curve: Vec<PnlChartPoint> = portfolio_curve
+        .iter()
+        .map(|p| PnlChartPoint {
+            date: p.date.clone(),
+            pnl: p.pnl.clone(),
+        })
         .collect();
 
     // 4) Summary stats
-    let final_value = portfolio_curve.last()
+    let final_value = portfolio_curve
+        .last()
         .and_then(|p| p.value.parse::<f64>().ok())
         .unwrap_or(initial_capital);
     let total_pnl = final_value - initial_capital;
-    let total_return_pct = if initial_capital > 0.0 { (total_pnl / initial_capital) * 100.0 } else { 0.0 };
+    let total_return_pct = if initial_capital > 0.0 {
+        (total_pnl / initial_capital) * 100.0
+    } else {
+        0.0
+    };
 
     // Max drawdown on portfolio value
     let mut peak_value = initial_capital;
@@ -2143,11 +2236,21 @@ pub async fn backtest(
     let mut max_dd_pct: f64 = 0.0;
     for pt in &portfolio_curve {
         let v = pt.value.parse::<f64>().unwrap_or(initial_capital);
-        if v > peak_value { peak_value = v; }
+        if v > peak_value {
+            peak_value = v;
+        }
         let dd = peak_value - v;
-        if dd > max_dd { max_dd = dd; }
-        let dd_pct = if peak_value > 0.0 { dd / peak_value * 100.0 } else { 0.0 };
-        if dd_pct > max_dd_pct { max_dd_pct = dd_pct; }
+        if dd > max_dd {
+            max_dd = dd;
+        }
+        let dd_pct = if peak_value > 0.0 {
+            dd / peak_value * 100.0
+        } else {
+            0.0
+        };
+        if dd_pct > max_dd_pct {
+            max_dd_pct = dd_pct;
+        }
     }
 
     // Win rate + position count
@@ -2173,7 +2276,11 @@ pub async fn backtest(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let win_rate = if wr.total > 0 { (wr.wins as f64 / wr.total as f64) * 100.0 } else { 0.0 };
+    let win_rate = if wr.total > 0 {
+        (wr.wins as f64 / wr.total as f64) * 100.0
+    } else {
+        0.0
+    };
 
     // 5) Per-trader breakdown with scaling
     #[derive(clickhouse::Row, serde::Deserialize)]
@@ -2202,26 +2309,43 @@ pub async fn backtest(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let total_scaled_abs: f64 = trader_pnls.iter().map(|t| {
-        let raw = t.pnl.parse::<f64>().unwrap_or(0.0);
-        let scale = trader_scales.get(&t.address.to_lowercase()).copied().unwrap_or(1.0);
-        (raw * scale).abs()
-    }).sum();
+    let total_scaled_abs: f64 = trader_pnls
+        .iter()
+        .map(|t| {
+            let raw = t.pnl.parse::<f64>().unwrap_or(0.0);
+            let scale = trader_scales
+                .get(&t.address.to_lowercase())
+                .copied()
+                .unwrap_or(1.0);
+            (raw * scale).abs()
+        })
+        .sum();
 
-    let traders: Vec<BacktestTrader> = trader_pnls.into_iter().enumerate().map(|(i, t)| {
-        let raw_pnl = t.pnl.parse::<f64>().unwrap_or(0.0);
-        let scale = trader_scales.get(&t.address.to_lowercase()).copied().unwrap_or(1.0);
-        let scaled = raw_pnl * scale;
-        BacktestTrader {
-            address: t.address,
-            rank: (i + 1) as u32,
-            pnl: t.pnl,
-            scaled_pnl: format!("{:.2}", scaled),
-            markets_traded: t.markets_traded,
-            contribution_pct: if total_scaled_abs > 0.0 { (scaled.abs() / total_scaled_abs) * 100.0 } else { 0.0 },
-            scale_factor: (scale * 1000.0).round() / 1000.0,
-        }
-    }).collect();
+    let traders: Vec<BacktestTrader> = trader_pnls
+        .into_iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let raw_pnl = t.pnl.parse::<f64>().unwrap_or(0.0);
+            let scale = trader_scales
+                .get(&t.address.to_lowercase())
+                .copied()
+                .unwrap_or(1.0);
+            let scaled = raw_pnl * scale;
+            BacktestTrader {
+                address: t.address,
+                rank: (i + 1) as u32,
+                pnl: t.pnl,
+                scaled_pnl: format!("{:.2}", scaled),
+                markets_traded: t.markets_traded,
+                contribution_pct: if total_scaled_abs > 0.0 {
+                    (scaled.abs() / total_scaled_abs) * 100.0
+                } else {
+                    0.0
+                },
+                scale_factor: (scale * 1000.0).round() / 1000.0,
+            }
+        })
+        .collect();
 
     Ok(Json(BacktestResponse {
         portfolio_curve,
@@ -2251,7 +2375,11 @@ fn simulate_portfolio(
     initial_capital: f64,
 ) -> Vec<PortfolioPoint> {
     // Compute initial cash: initial_capital minus cost of pre-window positions
-    let pre_window_cost: f64 = asset_state.values().map(|(_, cash, _)| -cash).sum::<f64>().max(0.0);
+    let pre_window_cost: f64 = asset_state
+        .values()
+        .map(|(_, cash, _)| -cash)
+        .sum::<f64>()
+        .max(0.0);
     let mut cash_balance = (initial_capital - pre_window_cost).max(0.0);
 
     let mut points: Vec<PortfolioPoint> = Vec::new();
@@ -2260,7 +2388,8 @@ fn simulate_portfolio(
     for row in rows {
         if !current_date.is_empty() && row.date != current_date {
             // Emit point for previous date
-            let positions_value: f64 = asset_state.values()
+            let positions_value: f64 = asset_state
+                .values()
                 .map(|(tokens, _, price)| tokens * price)
                 .sum();
             let total_value = cash_balance + positions_value;
@@ -2269,12 +2398,22 @@ fn simulate_portfolio(
                 date: current_date.clone(),
                 value: format!("{:.2}", total_value),
                 pnl: format!("{:.2}", pnl),
-                pnl_pct: format!("{:.2}", if initial_capital > 0.0 { pnl / initial_capital * 100.0 } else { 0.0 }),
+                pnl_pct: format!(
+                    "{:.2}",
+                    if initial_capital > 0.0 {
+                        pnl / initial_capital * 100.0
+                    } else {
+                        0.0
+                    }
+                ),
             });
         }
         current_date.clone_from(&row.date);
 
-        let scale = trader_scales.get(&row.trader.to_lowercase()).copied().unwrap_or(1.0);
+        let scale = trader_scales
+            .get(&row.trader.to_lowercase())
+            .copied()
+            .unwrap_or(1.0);
         let mut delta_tokens = row.net_token_delta.parse::<f64>().unwrap_or(0.0) * scale;
         let mut delta_cash = row.cash_flow_delta.parse::<f64>().unwrap_or(0.0) * scale;
         let price = row.last_price.parse::<f64>().unwrap_or(0.0);
@@ -2288,14 +2427,18 @@ fn simulate_portfolio(
                 delta_cash *= clip;
             } else if cash_balance <= 0.0 {
                 // No cash left — skip this buy
-                let entry = asset_state.entry(row.asset_id.clone()).or_insert((0.0, 0.0, 0.0));
+                let entry = asset_state
+                    .entry(row.asset_id.clone())
+                    .or_insert((0.0, 0.0, 0.0));
                 entry.2 = price; // Still update price
                 continue;
             }
         }
 
         cash_balance += delta_cash;
-        let entry = asset_state.entry(row.asset_id.clone()).or_insert((0.0, 0.0, 0.0));
+        let entry = asset_state
+            .entry(row.asset_id.clone())
+            .or_insert((0.0, 0.0, 0.0));
         entry.0 += delta_tokens;
         entry.1 += delta_cash;
         entry.2 = price;
@@ -2303,7 +2446,8 @@ fn simulate_portfolio(
 
     // Final point with resolved prices
     if !current_date.is_empty() {
-        let positions_value: f64 = asset_state.iter()
+        let positions_value: f64 = asset_state
+            .iter()
             .map(|(asset_id, (tokens, _, price))| {
                 let final_price = resolved.get(asset_id).copied().unwrap_or(*price);
                 tokens * final_price
@@ -2315,7 +2459,14 @@ fn simulate_portfolio(
             date: current_date,
             value: format!("{:.2}", total_value),
             pnl: format!("{:.2}", pnl),
-            pnl_pct: format!("{:.2}", if initial_capital > 0.0 { pnl / initial_capital * 100.0 } else { 0.0 }),
+            pnl_pct: format!(
+                "{:.2}",
+                if initial_capital > 0.0 {
+                    pnl / initial_capital * 100.0
+                } else {
+                    0.0
+                }
+            ),
         });
     }
 
@@ -2333,7 +2484,10 @@ pub async fn copy_portfolio(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     // Mutual exclusion: list_id and top cannot both be present
     if params.list_id.is_some() && params.top.is_some() {
-        return Err((StatusCode::BAD_REQUEST, "Specify list_id or top, not both".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Specify list_id or top, not both".into(),
+        ));
     }
 
     let (trader_filter, trader_count) = if let Some(ref list_id) = params.list_id {
@@ -2341,14 +2495,18 @@ pub async fn copy_portfolio(
         let owner = user.0.clone();
         let addresses = {
             let conn = state.user_db.lock().unwrap_or_else(|p| p.into_inner());
-            db::get_list_member_addresses(&conn, list_id, &owner)
-                .map_err(|e| match e {
-                    db::ListError::NotFound => (StatusCode::NOT_FOUND, "List not found".into()),
-                    _ => (StatusCode::INTERNAL_SERVER_ERROR, "Failed to load list".into()),
-                })?
+            db::get_list_member_addresses(&conn, list_id, &owner).map_err(|e| match e {
+                db::ListError::NotFound => (StatusCode::NOT_FOUND, "List not found".into()),
+                _ => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Failed to load list".into(),
+                ),
+            })?
         };
         let count = addresses.len() as u32;
-        let in_list = addresses.into_iter().take(100)
+        let in_list = addresses
+            .into_iter()
+            .take(100)
             .map(|a| format!("'{a}'"))
             .collect::<Vec<_>>()
             .join(",");
@@ -2446,8 +2604,10 @@ pub async fn copy_portfolio(
     let mut merged: std::collections::HashMap<String, CopyPortfolioPosition> =
         std::collections::HashMap::new();
     // Track unique traders per market for convergence count
-    let mut traders_per_market: std::collections::HashMap<String, std::collections::HashSet<String>> =
-        std::collections::HashMap::new();
+    let mut traders_per_market: std::collections::HashMap<
+        String,
+        std::collections::HashSet<String>,
+    > = std::collections::HashMap::new();
 
     for r in &rows {
         let info = match market_info.get(&r.asset_id) {
@@ -2517,15 +2677,13 @@ pub async fn copy_portfolio(
     // Sort by convergence DESC, then exposure DESC
     let mut positions: Vec<CopyPortfolioPosition> = merged.into_values().collect();
     positions.sort_by(|a, b| {
-        b.convergence
-            .cmp(&a.convergence)
-            .then_with(|| {
-                let a_exp: f64 = a.total_exposure.parse().unwrap_or(0.0);
-                let b_exp: f64 = b.total_exposure.parse().unwrap_or(0.0);
-                b_exp
-                    .partial_cmp(&a_exp)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
+        b.convergence.cmp(&a.convergence).then_with(|| {
+            let a_exp: f64 = a.total_exposure.parse().unwrap_or(0.0);
+            let b_exp: f64 = b.total_exposure.parse().unwrap_or(0.0);
+            b_exp
+                .partial_cmp(&a_exp)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
     });
 
     let total_exposure: f64 = positions
@@ -2563,7 +2721,10 @@ fn shorten_id(id: &str) -> String {
 fn map_list_error(e: db::ListError) -> (StatusCode, String) {
     match e {
         db::ListError::LimitExceeded(msg) => (StatusCode::BAD_REQUEST, msg.into()),
-        db::ListError::DuplicateName => (StatusCode::CONFLICT, "A list with this name already exists".into()),
+        db::ListError::DuplicateName => (
+            StatusCode::CONFLICT,
+            "A list with this name already exists".into(),
+        ),
         db::ListError::NotFound => (StatusCode::NOT_FOUND, "List not found".into()),
         db::ListError::Db(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
@@ -2586,7 +2747,10 @@ pub async fn create_trader_list(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let name = req.name.trim().to_string();
     if name.is_empty() || name.len() > 50 {
-        return Err((StatusCode::BAD_REQUEST, "Name must be 1-50 characters".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Name must be 1-50 characters".into(),
+        ));
     }
     let conn = state.user_db.lock().unwrap_or_else(|p| p.into_inner());
     let list = db::create_trader_list(&conn, &owner, &name).map_err(map_list_error)?;
@@ -2611,7 +2775,10 @@ pub async fn rename_trader_list(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let name = req.name.trim().to_string();
     if name.is_empty() || name.len() > 50 {
-        return Err((StatusCode::BAD_REQUEST, "Name must be 1-50 characters".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Name must be 1-50 characters".into(),
+        ));
     }
     let conn = state.user_db.lock().unwrap_or_else(|p| p.into_inner());
     db::rename_trader_list(&conn, &id, &owner, &name).map_err(map_list_error)?;
@@ -2635,7 +2802,10 @@ pub async fn add_list_members(
     Json(req): Json<AddMembersRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     if req.addresses.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, "At least one address required".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "At least one address required".into(),
+        ));
     }
 
     let labels = req.labels.unwrap_or_default();
@@ -2663,11 +2833,7 @@ pub async fn remove_list_members(
     Path(id): Path<String>,
     Json(req): Json<RemoveMembersRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let addresses: Vec<String> = req
-        .addresses
-        .iter()
-        .map(|a| a.to_lowercase())
-        .collect();
+    let addresses: Vec<String> = req.addresses.iter().map(|a| a.to_lowercase()).collect();
 
     let conn = state.user_db.lock().unwrap_or_else(|p| p.into_inner());
     db::remove_list_members(&conn, &id, &owner, &addresses).map_err(map_list_error)?;

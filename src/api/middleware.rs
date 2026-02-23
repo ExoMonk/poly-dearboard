@@ -37,8 +37,8 @@ impl FromRequestParts<AppState> for AuthUser {
             .strip_prefix("Bearer ")
             .ok_or(StatusCode::UNAUTHORIZED)?;
 
-        let address =
-            super::auth::validate_jwt(token, &state.jwt_secret).map_err(|_| StatusCode::UNAUTHORIZED)?;
+        let address = super::auth::validate_jwt(token, &state.jwt_secret)
+            .map_err(|_| StatusCode::UNAUTHORIZED)?;
 
         Ok(AuthUser(address))
     }

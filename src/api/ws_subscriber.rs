@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use alloy_primitives::B256;
-use alloy_sol_types::{sol, SolEvent};
+use alloy_sol_types::{SolEvent, sol};
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use tokio::sync::{broadcast, watch};
@@ -185,12 +185,17 @@ async fn subscribe_and_process(
         if trader_watch_rx.has_changed().unwrap_or(false) {
             let new_addrs = trader_watch_rx.borrow_and_update().clone();
             if new_addrs.is_empty() || new_addrs != *addrs {
-                tracing::info!("WS subscriber: addresses changed during reconnect, returning to resubscribe");
+                tracing::info!(
+                    "WS subscriber: addresses changed during reconnect, returning to resubscribe"
+                );
                 return;
             }
         }
 
-        tracing::info!("WS subscriber: connecting to {}", &ws_url[..ws_url.len().min(60)]);
+        tracing::info!(
+            "WS subscriber: connecting to {}",
+            &ws_url[..ws_url.len().min(60)]
+        );
 
         match tokio_tungstenite::connect_async(ws_url).await {
             Ok((ws_stream, _)) => {
@@ -211,7 +216,10 @@ async fn subscribe_and_process(
                     }]
                 });
 
-                tracing::debug!("WS subscriber: sending eth_subscribe with {} maker filter(s)", addrs.len());
+                tracing::debug!(
+                    "WS subscriber: sending eth_subscribe with {} maker filter(s)",
+                    addrs.len()
+                );
 
                 if let Err(e) = write.send(Message::Text(subscribe_msg.to_string())).await {
                     tracing::warn!("WS subscriber: failed to send subscribe: {e}");
@@ -426,11 +434,8 @@ async fn decode_order_filled(
     let usdc_raw_u128: u128 = usdc_raw.try_into().ok()?;
     let token_raw_u128: u128 = token_raw.try_into().ok()?;
 
-    let block_number = u64::from_str_radix(
-        log_entry.block_number.trim_start_matches("0x"),
-        16,
-    )
-    .unwrap_or(0);
+    let block_number =
+        u64::from_str_radix(log_entry.block_number.trim_start_matches("0x"), 16).unwrap_or(0);
 
     let block_timestamp = match cached_block {
         Some((cached_num, cached_ts)) if *cached_num == block_number => *cached_ts,

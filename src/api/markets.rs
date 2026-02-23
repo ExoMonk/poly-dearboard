@@ -224,7 +224,11 @@ pub async fn populate_resolved_prices(db: &clickhouse::Client, cache: &MarketCac
     let resolution_map: HashMap<String, (&Vec<String>, u64)> = resolutions
         .iter()
         .map(|r| {
-            let bare = r.condition_id.strip_prefix("0x").unwrap_or(&r.condition_id).to_string();
+            let bare = r
+                .condition_id
+                .strip_prefix("0x")
+                .unwrap_or(&r.condition_id)
+                .to_string();
             (bare, (&r.payout_numerators, r.block_number))
         })
         .collect();
