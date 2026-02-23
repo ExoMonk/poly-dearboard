@@ -121,7 +121,7 @@ pub async fn run(
     rpc_url: String,
 ) {
     let ws_url = std::env::var("POLYGON_WS_URL").unwrap_or_else(|_| {
-        "wss://polygon-mainnet.g.alchemy.com/v2/Nj9NIo0-mbjkAl7aE9IgBhHEWHB4m8jq".into()
+        "".into()
     });
 
     // Wait for market cache to warm before subscribing
