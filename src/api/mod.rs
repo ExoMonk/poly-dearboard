@@ -1,7 +1,10 @@
 pub mod alerts;
 pub mod auth;
+pub mod contracts;
+pub mod copytrade;
 pub mod crypto;
 pub mod db;
+pub mod engine;
 pub mod markets;
 pub mod middleware;
 pub mod routes;

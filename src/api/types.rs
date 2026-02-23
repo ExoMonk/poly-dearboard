@@ -637,6 +637,48 @@ pub struct DeriveCredentialsResponse {
     pub api_key: String,
 }
 
+// -- Wallet Funding (spec 14) --
+
+#[derive(Serialize)]
+pub struct WalletBalance {
+    pub usdc_balance: String,
+    pub usdc_raw: String,
+    pub ctf_exchange_approved: bool,
+    pub neg_risk_exchange_approved: bool,
+    pub pol_balance: String,
+    pub needs_gas: bool,
+    pub last_checked_secs_ago: Option<u64>,
+}
+
+#[derive(Serialize)]
+pub struct ApprovalResult {
+    pub ctf_tx_hash: Option<String>,
+    pub neg_risk_tx_hash: Option<String>,
+    pub already_approved: bool,
+}
+
+#[derive(Serialize)]
+pub struct DepositAddresses {
+    pub evm: String,
+    pub svm: String,
+    pub btc: String,
+    pub note: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct DepositStatus {
+    pub pending: Vec<PendingDeposit>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PendingDeposit {
+    pub from_chain: String,
+    pub token: String,
+    pub amount: String,
+    pub status: String,
+    pub tx_hash: Option<String>,
+}
+
 // -- Market Metadata (persisted from Gamma API cache to ClickHouse) --
 
 #[derive(clickhouse::Row, Serialize, Deserialize)]
@@ -652,4 +694,324 @@ pub struct MarketMetadataRow {
     pub all_token_ids: Vec<String>,
     pub outcomes: Vec<String>,
     pub updated_at: u32,
+}
+
+// -- Copy-Trade Engine (spec 15) --
+
+#[derive(Deserialize)]
+pub struct CreateSessionRequest {
+    pub list_id: Option<String>,
+    pub top_n: Option<u32>,
+    pub copy_pct: f64,
+    #[serde(default = "default_max_position")]
+    pub max_position_usdc: f64,
+    #[serde(default = "default_max_slippage")]
+    pub max_slippage_bps: u32,
+    #[serde(default = "default_order_type")]
+    pub order_type: String,
+    pub initial_capital: f64,
+    #[serde(default)]
+    pub simulate: bool,
+    pub max_loss_pct: Option<f64>,
+}
+
+fn default_max_position() -> f64 {
+    500.0
+}
+fn default_max_slippage() -> u32 {
+    200
+}
+fn default_order_type() -> String {
+    "FOK".to_string()
+}
+
+#[derive(Deserialize)]
+pub struct SessionPatchRequest {
+    pub action: String,
+}
+
+#[derive(Deserialize)]
+pub struct ClosePositionRequest {
+    pub session_id: String,
+    pub asset_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct SessionOrdersParams {
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CopyOrderType {
+    FOK,
+    GTC,
+}
+
+impl CopyOrderType {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_uppercase().as_str() {
+            "FOK" => Some(Self::FOK),
+            "GTC" => Some(Self::GTC),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::FOK => "FOK",
+            Self::GTC => "GTC",
+        }
+    }
+}
+
+impl Serialize for CopyOrderType {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionStatus {
+    Running,
+    Paused,
+    Stopped,
+}
+
+impl SessionStatus {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "running" => Some(Self::Running),
+            "paused" => Some(Self::Paused),
+            "stopped" => Some(Self::Stopped),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Paused => "paused",
+            Self::Stopped => "stopped",
+        }
+    }
+}
+
+impl Serialize for SessionStatus {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OrderStatus {
+    Pending,
+    Submitted,
+    Filled,
+    Partial,
+    Failed,
+    Canceled,
+    Simulated,
+}
+
+impl OrderStatus {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "pending" => Some(Self::Pending),
+            "submitted" => Some(Self::Submitted),
+            "filled" => Some(Self::Filled),
+            "partial" => Some(Self::Partial),
+            "failed" => Some(Self::Failed),
+            "canceled" => Some(Self::Canceled),
+            "simulated" => Some(Self::Simulated),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Submitted => "submitted",
+            Self::Filled => "filled",
+            Self::Partial => "partial",
+            Self::Failed => "failed",
+            Self::Canceled => "canceled",
+            Self::Simulated => "simulated",
+        }
+    }
+}
+
+impl Serialize for OrderStatus {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+#[derive(Serialize)]
+pub struct CopyTradeSession {
+    pub id: String,
+    pub list_id: Option<String>,
+    pub top_n: Option<u32>,
+    pub copy_pct: f64,
+    pub max_position_usdc: f64,
+    pub max_slippage_bps: u32,
+    pub order_type: CopyOrderType,
+    pub initial_capital: f64,
+    pub remaining_capital: f64,
+    /// Estimated value of open positions (shares × avg entry price)
+    pub positions_value: f64,
+    pub simulate: bool,
+    pub max_loss_pct: Option<f64>,
+    pub status: SessionStatus,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Serialize)]
+pub struct CopyTradeOrder {
+    pub id: String,
+    pub session_id: String,
+    pub source_tx_hash: String,
+    pub source_trader: String,
+    pub clob_order_id: Option<String>,
+    pub asset_id: String,
+    pub side: String,
+    pub price: f64,
+    pub source_price: f64,
+    pub size_usdc: f64,
+    pub size_shares: Option<f64>,
+    pub status: OrderStatus,
+    pub error_message: Option<String>,
+    pub fill_price: Option<f64>,
+    pub slippage_bps: Option<f64>,
+    pub tx_hash: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Clone, Serialize)]
+pub struct CopyTradeOrderSummary {
+    pub id: String,
+    pub asset_id: String,
+    pub side: String,
+    pub size_usdc: f64,
+    pub price: f64,
+    pub source_trader: String,
+    pub simulate: bool,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(tag = "kind")]
+pub enum CopyTradeUpdate {
+    OrderPlaced {
+        session_id: String,
+        order: CopyTradeOrderSummary,
+        #[serde(skip)]
+        owner: String,
+    },
+    OrderFilled {
+        session_id: String,
+        order_id: String,
+        fill_price: f64,
+        slippage_bps: f64,
+        #[serde(skip)]
+        owner: String,
+    },
+    OrderFailed {
+        session_id: String,
+        order_id: String,
+        error: String,
+        #[serde(skip)]
+        owner: String,
+    },
+    SessionPaused {
+        session_id: String,
+        #[serde(skip)]
+        owner: String,
+    },
+    SessionResumed {
+        session_id: String,
+        #[serde(skip)]
+        owner: String,
+    },
+    SessionStopped {
+        session_id: String,
+        reason: Option<String>,
+        #[serde(skip)]
+        owner: String,
+    },
+    BalanceUpdate {
+        balance: String,
+        #[serde(skip)]
+        owner: String,
+    },
+}
+
+impl CopyTradeUpdate {
+    pub fn owner(&self) -> &str {
+        match self {
+            Self::OrderPlaced { owner, .. }
+            | Self::OrderFilled { owner, .. }
+            | Self::OrderFailed { owner, .. }
+            | Self::SessionPaused { owner, .. }
+            | Self::SessionResumed { owner, .. }
+            | Self::SessionStopped { owner, .. }
+            | Self::BalanceUpdate { owner, .. } => owner,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Copy-Trade Dashboard (spec 16)
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct SessionStats {
+    pub total_orders: u32,
+    pub filled_orders: u32,
+    pub failed_orders: u32,
+    pub pending_orders: u32,
+    pub canceled_orders: u32,
+    pub total_invested: f64,
+    pub total_returned: f64,
+    pub realized_pnl: f64,
+    pub unrealized_pnl: f64,
+    pub total_pnl: f64,
+    pub return_pct: f64,
+    pub win_count: u32,
+    pub loss_count: u32,
+    pub win_rate: f64,
+    pub avg_slippage_bps: f64,
+    pub max_slippage_bps: f64,
+    pub capital_utilization: f64,
+    pub runtime_seconds: i64,
+}
+
+#[derive(Serialize)]
+pub struct CopyTradePosition {
+    pub asset_id: String,
+    pub question: String,
+    pub outcome: String,
+    pub category: String,
+    pub buy_shares: f64,
+    pub sell_shares: f64,
+    pub net_shares: f64,
+    pub avg_entry_price: f64,
+    pub current_price: f64,
+    pub last_fill_price: f64,
+    pub cost_basis: f64,
+    pub current_value: f64,
+    pub unrealized_pnl: f64,
+    pub realized_pnl: f64,
+    pub order_count: u32,
+    pub source_traders: Vec<String>,
+    pub last_order_at: String,
+}
+
+#[derive(Serialize)]
+pub struct CopyTradeSummary {
+    pub active_sessions: u32,
+    pub total_pnl: f64,
+    pub total_return_pct: f64,
+    pub total_orders: u32,
 }

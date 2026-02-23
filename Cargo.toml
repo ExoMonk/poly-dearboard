@@ -30,5 +30,10 @@ hmac = "0.12"
 sha2 = "0.10"
 secrecy = { version = "0.10", features = ["serde"] }
 k256 = { version = "0.13", features = ["ecdsa"] }
+rust_decimal = { version = "1", features = ["serde-with-str"] }
 polymarket-client-sdk = { version = "0.4", features = ["clob"] }
-alloy = { version = "1", features = ["signers", "signer-local"] }
+alloy = { version = "1", features = [
+    "signers", "signer-local",
+    "providers", "provider-http", "reqwest",
+    "network", "contract", "sol-types",
+] }

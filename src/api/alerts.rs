@@ -14,6 +14,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
+use super::types::CopyTradeUpdate;
 use super::{markets, server::AppState};
 
 // ---------------------------------------------------------------------------
@@ -531,6 +532,9 @@ async fn handle_ws(mut socket: WebSocket, mut rx: broadcast::Receiver<Alert>) {
 #[derive(Deserialize)]
 pub struct TradesWsParams {
     token_ids: String,
+    /// Optional comma-separated trader addresses for server-side filtering.
+    /// When set, only trades from these addresses are forwarded.
+    traders: Option<String>,
 }
 
 pub async fn trades_ws_handler(
@@ -543,8 +547,16 @@ pub async fn trades_ws_handler(
         .split(',')
         .map(|s| markets::cache_key(s.trim()))
         .collect();
+    let trader_filter: HashSet<String> = params
+        .traders
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
     ws.on_upgrade(move |socket| {
-        handle_trades_ws(socket, state.trade_tx.subscribe(), prefixes)
+        handle_trades_ws(socket, state.trade_tx.subscribe(), prefixes, trader_filter)
     })
 }
 
@@ -552,6 +564,7 @@ async fn handle_trades_ws(
     mut socket: WebSocket,
     mut rx: broadcast::Receiver<LiveTrade>,
     prefixes: HashSet<String>,
+    trader_filter: HashSet<String>,
 ) {
     loop {
         tokio::select! {
@@ -559,6 +572,11 @@ async fn handle_trades_ws(
                 match result {
                     Ok(trade) => {
                         if !prefixes.contains(&trade.cache_key) {
+                            continue;
+                        }
+                        if !trader_filter.is_empty()
+                            && !trader_filter.contains(&trade.trader.to_lowercase())
+                        {
                             continue;
                         }
                         let json = match serde_json::to_string(&trade) {
@@ -828,6 +846,64 @@ async fn handle_signal_ws(
             }
             _ = sweep_interval.tick() => {
                 detector.sweep();
+            }
+            msg = socket.recv() => {
+                match msg {
+                    Some(Ok(Message::Close(_))) | None => break,
+                    Some(Err(_)) => break,
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Copy-trade updates WebSocket (/ws/copytrade?token=JWT)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct CopyTradeWsParams {
+    token: String,
+}
+
+pub async fn copytrade_ws_handler(
+    State(state): State<AppState>,
+    Query(params): Query<CopyTradeWsParams>,
+    ws: WebSocketUpgrade,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let owner = super::auth::validate_jwt(&params.token, &state.jwt_secret)
+        .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid token".into()))?;
+
+    let rx = state.copytrade_update_tx.subscribe();
+    Ok(ws.on_upgrade(move |socket| handle_copytrade_ws(socket, rx, owner)))
+}
+
+async fn handle_copytrade_ws(
+    mut socket: WebSocket,
+    mut rx: broadcast::Receiver<CopyTradeUpdate>,
+    owner: String,
+) {
+    loop {
+        tokio::select! {
+            result = rx.recv() => {
+                match result {
+                    Ok(update) => {
+                        // Filter by owner
+                        if update.owner() != owner {
+                            continue;
+                        }
+                        if let Ok(json) = serde_json::to_string(&update) {
+                            if socket.send(Message::Text(json.into())).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("Copytrade WS lagged, dropped {n} updates");
+                    }
+                    Err(_) => break,
+                }
             }
             msg = socket.recv() => {
                 match msg {

@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, RwLock};
 use tower_http::cors::{Any, CorsLayer};
 
-use super::{alerts, db, markets, routes, scanner, wallet, ws_subscriber, types::LeaderboardResponse};
+use super::{alerts, contracts, copytrade, db, engine, markets, routes, scanner, wallet, ws_subscriber, types::LeaderboardResponse};
 
 /// Cached leaderboard response with expiry.
 pub struct CachedResponse {
@@ -15,6 +15,20 @@ pub struct CachedResponse {
 }
 
 pub type LeaderboardCache = Arc<RwLock<HashMap<String, CachedResponse>>>;
+
+/// Per-wallet balance + approval state (ephemeral, not persisted).
+#[derive(Clone)]
+pub struct WalletBalanceState {
+    pub usdc_balance: String,
+    pub usdc_raw: String,
+    pub pol_balance: String,
+    pub pol_raw: String,
+    pub ctf_approved: bool,
+    pub neg_risk_approved: bool,
+    pub last_checked: std::time::Instant,
+}
+
+pub type WalletBalances = Arc<RwLock<HashMap<String, WalletBalanceState>>>;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -29,6 +43,11 @@ pub struct AppState {
     pub jwt_secret: Arc<Vec<u8>>,
     pub ws_subscriber_active: Arc<AtomicBool>,
     pub encryption_key: Arc<[u8; 32]>,
+    pub erpc_url: Arc<String>,
+    pub wallet_balances: WalletBalances,
+    pub copytrade_cmd_tx: tokio::sync::mpsc::Sender<engine::CopyTradeCommand>,
+    pub copytrade_update_tx: broadcast::Sender<super::types::CopyTradeUpdate>,
+    pub clob_client: Arc<RwLock<Option<engine::ClobClientState>>>,
 }
 
 async fn metadata_writer(
@@ -111,12 +130,19 @@ pub async fn run(client: clickhouse::Client, port: u16) {
         .try_into()
         .expect("WALLET_ENCRYPTION_KEY must be exactly 32 bytes (64 hex chars)");
 
+    let erpc_url = std::env::var("POLYGON_RPC_URL")
+        .unwrap_or_else(|_| "http://localhost:4000/main/evm/137".into());
+
     let user_conn = db::init_user_db("data/users.db");
 
     let (alert_tx, _) = broadcast::channel::<alerts::Alert>(256);
     let (trade_tx, _) = broadcast::channel::<alerts::LiveTrade>(512);
     let (metadata_tx, metadata_rx) =
         tokio::sync::mpsc::channel::<(String, markets::MarketInfo)>(1024);
+    let (copytrade_cmd_tx, copytrade_cmd_rx) =
+        tokio::sync::mpsc::channel::<engine::CopyTradeCommand>(64);
+    let (copytrade_update_tx, _) =
+        broadcast::channel::<super::types::CopyTradeUpdate>(256);
 
     let state = AppState {
         db: client,
@@ -130,6 +156,11 @@ pub async fn run(client: clickhouse::Client, port: u16) {
         jwt_secret: Arc::new(jwt_secret.into_bytes()),
         ws_subscriber_active: Arc::new(AtomicBool::new(false)),
         encryption_key: Arc::new(encryption_key),
+        erpc_url: Arc::new(erpc_url),
+        wallet_balances: Arc::new(RwLock::new(HashMap::new())),
+        copytrade_cmd_tx,
+        copytrade_update_tx,
+        clob_client: Arc::new(RwLock::new(None)),
     };
 
     // Pre-warm the market name cache in the background, then refresh periodically
@@ -182,6 +213,25 @@ pub async fn run(client: clickhouse::Client, port: u16) {
         tokio::spawn(scanner::run(http, rpc_url, alert_tx));
     }
 
+    // Balance polling: checks USDC.e balance + allowances for all trading wallets
+    {
+        let state = state.clone();
+        tokio::spawn(balance_poll_task(state));
+    }
+
+    // Copy-trade engine: subscribes to trade_tx, places CLOB orders
+    {
+        let trade_rx = state.trade_tx.subscribe();
+        let update_tx = state.copytrade_update_tx.clone();
+        let clob = state.clob_client.clone();
+        let udb = state.user_db.clone();
+        let enc = state.encryption_key.clone();
+        let ch = state.db.clone();
+        tokio::spawn(engine::copytrade_engine_loop(
+            trade_rx, copytrade_cmd_rx, update_tx, clob, udb, enc, ch,
+        ));
+    }
+
     // Direct eth_subscribe for low-latency live trade feed
     {
         let ws_flag = state.ws_subscriber_active.clone();
@@ -223,7 +273,20 @@ pub async fn run(client: clickhouse::Client, port: u16) {
         .route("/wallets/generate", post(wallet::generate_wallet))
         .route("/wallets/import", post(wallet::import_wallet))
         .route("/wallets/{id}/derive-credentials", post(wallet::derive_credentials))
-        .route("/wallets/{id}", delete(wallet::delete_wallet));
+        .route("/wallets/{id}/balance", get(wallet::get_balance))
+        .route("/wallets/{id}/approve", post(wallet::approve_exchanges))
+        .route("/wallets/{id}/deposit-address", get(wallet::get_deposit_address))
+        .route("/wallets/{id}/deposit-status", get(wallet::get_deposit_status))
+        .route("/wallets/{id}", delete(wallet::delete_wallet))
+        // Copy-Trade Engine
+        .route("/copytrade/sessions", get(copytrade::list_sessions).post(copytrade::create_session))
+        .route("/copytrade/sessions/{id}", get(copytrade::get_session).patch(copytrade::update_session).delete(copytrade::delete_session))
+        .route("/copytrade/sessions/{id}/orders", get(copytrade::list_session_orders))
+        .route("/copytrade/sessions/{id}/stats", get(copytrade::get_session_stats))
+        .route("/copytrade/sessions/{id}/positions", get(copytrade::get_session_positions))
+        .route("/copytrade/summary", get(copytrade::get_summary))
+        .route("/copytrade/active-traders", get(copytrade::get_active_traders))
+        .route("/copytrade/close-position", post(copytrade::close_position));
 
     let app = Router::new()
         .nest("/api", public_api.merge(protected_api))
@@ -232,6 +295,8 @@ pub async fn run(client: clickhouse::Client, port: u16) {
         .route("/ws/trades", get(alerts::trades_ws_handler))
         // Signal feed WS (auth handled via query param in handler)
         .route("/ws/signals", get(alerts::signals_ws_handler))
+        // Copy-trade updates WS
+        .route("/ws/copytrade", get(alerts::copytrade_ws_handler))
         .layer(cors)
         .with_state(state);
 
@@ -241,4 +306,102 @@ pub async fn run(client: clickhouse::Client, port: u16) {
 
     tracing::info!("API server listening on port {port}");
     axum::serve(listener, app).await.expect("Server failed");
+}
+
+/// Background task: polls USDC.e balance + allowances for all trading wallets every 30s.
+async fn balance_poll_task(state: AppState) {
+    use alloy::primitives::Address;
+    use alloy::providers::Provider;
+
+    // Wait for eRPC and other services to be ready
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    loop {
+        interval.tick().await;
+
+        // Collect all wallet addresses + IDs from SQLite
+        // proxy_address holds USDC.e + allowances; wallet_address (EOA) holds POL for gas
+        let wallets = {
+            let state = state.clone();
+            match tokio::task::spawn_blocking(move || {
+                let conn = state.user_db.lock().expect("user_db lock");
+                let mut stmt = conn
+                    .prepare("SELECT id, wallet_address, proxy_address FROM trading_wallets")
+                    .ok()?;
+                let rows: Vec<(String, String, Option<String>)> = stmt
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                    .ok()?
+                    .filter_map(|r| r.ok())
+                    .collect();
+                Some(rows)
+            })
+            .await
+            {
+                Ok(Some(w)) if !w.is_empty() => w,
+                _ => continue,
+            }
+        };
+
+        let provider = contracts::create_provider(&state.erpc_url);
+        let usdc = contracts::IERC20::new(contracts::USDC_ADDRESS, &provider);
+
+        for (wallet_id, eoa_str, proxy_str) in &wallets {
+            let eoa = match eoa_str.parse::<Address>() {
+                Ok(a) => a,
+                Err(_) => continue,
+            };
+            // USDC.e balance lives on the proxy; allowances + POL on the EOA
+            let proxy = proxy_str
+                .as_deref()
+                .and_then(|s| s.parse::<Address>().ok())
+                .unwrap_or(eoa);
+
+            let bal_call = usdc.balanceOf(proxy);
+            let ctf_call = usdc.allowance(eoa, contracts::CTF_EXCHANGE);
+            let neg_call = usdc.allowance(eoa, contracts::NEG_RISK_EXCHANGE);
+            let (balance_res, ctf_allow_res, neg_allow_res, pol_gas_res) = tokio::join!(
+                bal_call.call(),
+                ctf_call.call(),
+                neg_call.call(),
+                provider.get_balance(eoa),
+            );
+
+            let usdc_raw = match balance_res {
+                Ok(raw) => raw,
+                Err(e) => {
+                    tracing::error!("Balance poll failed for {eoa_str}: {e}");
+                    continue;
+                }
+            };
+            let ctf_allowance = ctf_allow_res.inspect_err(|e| {
+                tracing::error!("CTF allowance poll failed for {eoa_str}: {e}");
+            }).unwrap_or_default();
+            let neg_allowance = neg_allow_res.inspect_err(|e| {
+                tracing::error!("NegRisk allowance poll failed for {eoa_str}: {e}");
+            }).unwrap_or_default();
+            let pol_wei = pol_gas_res.unwrap_or_default();
+
+            if usdc_raw > alloy::primitives::U256::ZERO && usdc_raw < contracts::LOW_BALANCE_RAW {
+                tracing::warn!(
+                    "Low USDC.e balance for wallet {eoa_str}: {}",
+                    contracts::format_usdc(usdc_raw)
+                );
+            }
+
+            let entry = WalletBalanceState {
+                usdc_balance: contracts::format_usdc(usdc_raw),
+                usdc_raw: usdc_raw.to_string(),
+                pol_balance: contracts::format_pol(pol_wei),
+                pol_raw: pol_wei.to_string(),
+                ctf_approved: !ctf_allowance.is_zero(),
+                neg_risk_approved: !neg_allowance.is_zero(),
+                last_checked: std::time::Instant::now(),
+            };
+
+            state.wallet_balances.write().await.insert(wallet_id.clone(), entry);
+        }
+    }
 }
