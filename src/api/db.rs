@@ -7,6 +7,7 @@ use super::types::{TraderList, TraderListDetail, TraderListMember};
 // Trading Wallet row type (internal, includes encrypted blobs)
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
 pub struct TradingWalletRow {
     pub id: String,
     pub owner: String,

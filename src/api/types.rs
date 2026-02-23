@@ -494,6 +494,7 @@ pub struct PnlInitialStateTraderRow {
 }
 
 #[derive(Row, Deserialize)]
+#[allow(dead_code)]
 pub struct TraderScaleRow {
     pub address: String,
     pub avg_position_size: String,
@@ -940,6 +941,7 @@ pub enum CopyTradeUpdate {
         #[serde(skip)]
         owner: String,
     },
+    #[allow(dead_code)]
     BalanceUpdate {
         balance: String,
         #[serde(skip)]
