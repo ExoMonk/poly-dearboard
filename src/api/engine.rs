@@ -197,6 +197,7 @@ pub async fn copytrade_engine_loop(
     user_db: Arc<Mutex<rusqlite::Connection>>,
     encryption_key: Arc<[u8; 32]>,
     ch_db: clickhouse::Client,
+    trader_watch_tx: tokio::sync::watch::Sender<std::collections::HashSet<String>>,
 ) {
     let mut sessions: HashMap<String, ActiveSession> = HashMap::new();
     let mut health_interval = tokio::time::interval(HEALTH_INTERVAL);
@@ -244,6 +245,7 @@ pub async fn copytrade_engine_loop(
         }
         if !sessions.is_empty() {
             tracing::info!("Reloaded {} running session(s)", sessions.len());
+            publish_tracked_addresses(&sessions, &trader_watch_tx);
         }
     }
 
@@ -270,7 +272,7 @@ pub async fn copytrade_engine_loop(
                         tracing::warn!("Copytrade engine lagged, dropped {n} trades");
                     }
                     Err(_) => {
-                        tracing::error!("trade_tx channel closed, engine shutting down");
+                        tracing::error!("copytrade_live_tx channel closed, engine shutting down");
                         break;
                     }
                 }
@@ -283,6 +285,7 @@ pub async fn copytrade_engine_loop(
                             &session_id, &owner, &mut sessions, &clob_client,
                             &user_db, &encryption_key, &ch_db, &update_tx,
                         ).await;
+                        publish_tracked_addresses(&sessions, &trader_watch_tx);
                     }
                     CopyTradeCommand::Pause { session_id } => {
                         if let Some(session) = sessions.get_mut(&session_id) {
@@ -291,6 +294,7 @@ pub async fn copytrade_engine_loop(
                                 session_id,
                                 owner: session.config.owner.clone(),
                             });
+                            publish_tracked_addresses(&sessions, &trader_watch_tx);
                         }
                     }
                     CopyTradeCommand::Resume { session_id } => {
@@ -307,6 +311,7 @@ pub async fn copytrade_engine_loop(
                                 session_id,
                                 owner: session.config.owner.clone(),
                             });
+                            publish_tracked_addresses(&sessions, &trader_watch_tx);
                         }
                     }
                     CopyTradeCommand::Stop { session_id } => {
@@ -327,13 +332,14 @@ pub async fn copytrade_engine_loop(
                                 reason: Some("user".to_string()),
                                 owner: session.config.owner.clone(),
                             });
+                            publish_tracked_addresses(&sessions, &trader_watch_tx);
                         }
                     }
                 }
             }
 
             _ = health_interval.tick() => {
-                health_check(&mut sessions, &clob_client, &user_db, &update_tx).await;
+                health_check(&mut sessions, &clob_client, &user_db, &update_tx, &trader_watch_tx).await;
             }
         }
     }
@@ -1103,6 +1109,30 @@ async fn record_failed_order(
 }
 
 // ---------------------------------------------------------------------------
+// Publish tracked addresses to ws_subscriber via watch channel
+// ---------------------------------------------------------------------------
+
+fn publish_tracked_addresses(
+    sessions: &HashMap<String, ActiveSession>,
+    trader_watch_tx: &tokio::sync::watch::Sender<std::collections::HashSet<String>>,
+) {
+    let union: std::collections::HashSet<String> = sessions
+        .values()
+        .filter(|s| {
+            SessionStatus::from_str(&s.config.status) == Some(SessionStatus::Running)
+        })
+        .flat_map(|s| s.traders.iter().cloned())
+        .map(|addr| addr.to_lowercase())
+        .collect();
+
+    tracing::info!(
+        "Publishing {} tracked address(es) to ws_subscriber",
+        union.len()
+    );
+    let _ = trader_watch_tx.send(union);
+}
+
+// ---------------------------------------------------------------------------
 // Health check (60s interval)
 // ---------------------------------------------------------------------------
 
@@ -1111,6 +1141,7 @@ async fn health_check(
     clob_client: &Arc<RwLock<Option<ClobClientState>>>,
     user_db: &Arc<Mutex<rusqlite::Connection>>,
     update_tx: &broadcast::Sender<CopyTradeUpdate>,
+    trader_watch_tx: &tokio::sync::watch::Sender<std::collections::HashSet<String>>,
 ) {
     let mut to_stop: Vec<(String, String, String)> = Vec::new(); // (id, owner, reason)
 
@@ -1183,6 +1214,7 @@ async fn health_check(
     }
 
     // Process stops outside the mutable borrow
+    let had_stops = !to_stop.is_empty();
     for (sid, owner, reason) in to_stop {
         if let Some(session) = sessions.remove(&sid) {
             // Cancel remaining GTC orders
@@ -1201,5 +1233,9 @@ async fn health_check(
                 owner,
             });
         }
+    }
+
+    if had_stops {
+        publish_tracked_addresses(sessions, trader_watch_tx);
     }
 }

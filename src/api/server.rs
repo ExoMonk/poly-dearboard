@@ -1,7 +1,6 @@
 use axum::routing::{delete, get, post};
 use axum::Router;
-use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, RwLock};
 use tower_http::cors::{Any, CorsLayer};
@@ -41,7 +40,8 @@ pub struct AppState {
     pub leaderboard_cache: LeaderboardCache,
     pub user_db: Arc<Mutex<rusqlite::Connection>>,
     pub jwt_secret: Arc<Vec<u8>>,
-    pub ws_subscriber_active: Arc<AtomicBool>,
+    pub copytrade_live_tx: broadcast::Sender<alerts::LiveTrade>,
+    pub trader_watch_tx: tokio::sync::watch::Sender<HashSet<String>>,
     pub encryption_key: Arc<[u8; 32]>,
     pub erpc_url: Arc<String>,
     pub wallet_balances: WalletBalances,
@@ -143,6 +143,9 @@ pub async fn run(client: clickhouse::Client, port: u16) {
         tokio::sync::mpsc::channel::<engine::CopyTradeCommand>(64);
     let (copytrade_update_tx, _) =
         broadcast::channel::<super::types::CopyTradeUpdate>(256);
+    let (copytrade_live_tx, _) = broadcast::channel::<alerts::LiveTrade>(128);
+    let (trader_watch_tx, trader_watch_rx) =
+        tokio::sync::watch::channel::<HashSet<String>>(HashSet::new());
 
     let state = AppState {
         db: client,
@@ -154,7 +157,8 @@ pub async fn run(client: clickhouse::Client, port: u16) {
         leaderboard_cache: Arc::new(RwLock::new(HashMap::new())),
         user_db: Arc::new(Mutex::new(user_conn)),
         jwt_secret: Arc::new(jwt_secret.into_bytes()),
-        ws_subscriber_active: Arc::new(AtomicBool::new(false)),
+        copytrade_live_tx,
+        trader_watch_tx,
         encryption_key: Arc::new(encryption_key),
         erpc_url: Arc::new(erpc_url),
         wallet_balances: Arc::new(RwLock::new(HashMap::new())),
@@ -219,29 +223,28 @@ pub async fn run(client: clickhouse::Client, port: u16) {
         tokio::spawn(balance_poll_task(state));
     }
 
-    // Copy-trade engine: subscribes to trade_tx, places CLOB orders
+    // Copy-trade engine: subscribes to copytrade_live_tx (targeted WS trades), places CLOB orders
     {
-        let trade_rx = state.trade_tx.subscribe();
+        let trade_rx = state.copytrade_live_tx.subscribe();
         let update_tx = state.copytrade_update_tx.clone();
         let clob = state.clob_client.clone();
         let udb = state.user_db.clone();
         let enc = state.encryption_key.clone();
         let ch = state.db.clone();
+        let watch_tx = state.trader_watch_tx.clone();
         tokio::spawn(engine::copytrade_engine_loop(
-            trade_rx, copytrade_cmd_rx, update_tx, clob, udb, enc, ch,
+            trade_rx, copytrade_cmd_rx, update_tx, clob, udb, enc, ch, watch_tx,
         ));
     }
 
-    // Direct eth_subscribe for low-latency live trade feed
+    // Targeted eth_subscribe for copy-trade sessions only (zero CU when no sessions active)
     {
-        let ws_flag = state.ws_subscriber_active.clone();
-        let trade_tx = state.trade_tx.clone();
-        let alert_tx = state.alert_tx.clone();
+        let copytrade_tx = state.copytrade_live_tx.clone();
         let cache = state.market_cache.clone();
         let http = state.http.clone();
         let rpc_url = std::env::var("POLYGON_RPC_URL")
             .unwrap_or_else(|_| "http://erpc:4000/main/evm/137".into());
-        tokio::spawn(ws_subscriber::run(ws_flag, trade_tx, alert_tx, cache, http, rpc_url));
+        tokio::spawn(ws_subscriber::run(copytrade_tx, trader_watch_rx, cache, http, rpc_url));
     }
 
     // Public API routes (no auth required)
