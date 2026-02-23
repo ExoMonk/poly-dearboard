@@ -430,6 +430,43 @@ export interface DeriveCredentialsResponse {
   api_key: string;
 }
 
+// Wallet Funding (spec 14)
+
+export interface WalletBalance {
+  usdc_balance: string;
+  usdc_raw: string;
+  ctf_exchange_approved: boolean;
+  neg_risk_exchange_approved: boolean;
+  pol_balance: string;
+  needs_gas: boolean;
+  last_checked_secs_ago: number | null;
+}
+
+export interface ApprovalResult {
+  ctf_tx_hash: string | null;
+  neg_risk_tx_hash: string | null;
+  already_approved: boolean;
+}
+
+export interface DepositAddresses {
+  evm: string;
+  svm: string;
+  btc: string;
+  note: string | null;
+}
+
+export interface DepositStatus {
+  pending: PendingDeposit[];
+}
+
+export interface PendingDeposit {
+  from_chain: string;
+  token: string;
+  amount: string;
+  status: string;
+  tx_hash: string | null;
+}
+
 // Terminal Shell (spec 12)
 export interface LogEntry {
   id: string;
@@ -442,3 +479,128 @@ export interface LogEntry {
 export type TerminalTab = "wallet" | "sessions" | "logs" | "orders";
 export type TerminalHeight = "collapsed" | "half" | "full";
 export type WalletStatus = "none" | "setup" | "funded" | "active";
+
+// Copy-Trade Engine (spec 15)
+export type SessionStatus = "running" | "paused" | "stopped";
+export type CopyOrderType = "FOK" | "GTC";
+export type OrderStatus = "pending" | "submitted" | "filled" | "partial" | "failed" | "canceled" | "simulated";
+
+export interface CreateSessionRequest {
+  list_id?: string;
+  top_n?: number;
+  copy_pct: number;
+  max_position_usdc: number;
+  max_slippage_bps: number;
+  order_type: CopyOrderType;
+  initial_capital: number;
+  simulate: boolean;
+  max_loss_pct?: number;
+}
+
+export interface CopyTradeSession {
+  id: string;
+  list_id: string | null;
+  top_n: number | null;
+  copy_pct: number;
+  max_position_usdc: number;
+  max_slippage_bps: number;
+  order_type: CopyOrderType;
+  initial_capital: number;
+  remaining_capital: number;
+  positions_value: number;
+  simulate: boolean;
+  max_loss_pct: number | null;
+  status: SessionStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CopyTradeOrder {
+  id: string;
+  session_id: string;
+  source_tx_hash: string;
+  source_trader: string;
+  clob_order_id: string | null;
+  asset_id: string;
+  side: string;
+  price: number;
+  source_price: number;
+  size_usdc: number;
+  size_shares: number | null;
+  status: OrderStatus;
+  error_message: string | null;
+  fill_price: number | null;
+  slippage_bps: number | null;
+  tx_hash: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CopyTradeOrderSummary {
+  id: string;
+  asset_id: string;
+  side: string;
+  size_usdc: number;
+  price: number;
+  source_trader: string;
+  simulate: boolean;
+}
+
+export type CopyTradeUpdate =
+  | { kind: "OrderPlaced"; session_id: string; order: CopyTradeOrderSummary }
+  | { kind: "OrderFilled"; session_id: string; order_id: string; fill_price: number; slippage_bps: number }
+  | { kind: "OrderFailed"; session_id: string; order_id: string; error: string }
+  | { kind: "SessionPaused"; session_id: string }
+  | { kind: "SessionResumed"; session_id: string }
+  | { kind: "SessionStopped"; session_id: string; reason: string | null }
+  | { kind: "BalanceUpdate"; balance: string };
+
+// Copy-Trade Dashboard (spec 16)
+
+export interface SessionStats {
+  total_orders: number;
+  filled_orders: number;
+  failed_orders: number;
+  pending_orders: number;
+  canceled_orders: number;
+  total_invested: number;
+  total_returned: number;
+  realized_pnl: number;
+  unrealized_pnl: number;
+  total_pnl: number;
+  return_pct: number;
+  win_count: number;
+  loss_count: number;
+  win_rate: number;
+  avg_slippage_bps: number;
+  max_slippage_bps: number;
+  capital_utilization: number;
+  runtime_seconds: number;
+}
+
+export interface CopyTradePosition {
+  asset_id: string;
+  question: string;
+  outcome: string;
+  category: string;
+  buy_shares: number;
+  sell_shares: number;
+  net_shares: number;
+  avg_entry_price: number;
+  current_price: number;
+  last_fill_price: number;
+  cost_basis: number;
+  current_value: number;
+  unrealized_pnl: number;
+  realized_pnl: number;
+  order_count: number;
+  source_traders: string[];
+  last_order_at: string;
+}
+
+export interface CopyTradeSummary {
+  active_sessions: number;
+  total_pnl: number;
+  total_return_pct: number;
+  total_orders: number;
+}

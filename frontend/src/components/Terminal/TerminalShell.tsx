@@ -6,20 +6,14 @@ import { TerminalSidebar } from "./TerminalSidebar";
 import { TerminalLogs } from "./TerminalLogs";
 import { TerminalStatusBar } from "./TerminalStatusBar";
 import { WalletTab } from "./WalletTab";
+import { SessionsTab } from "./SessionsTab";
+import { OrdersTab } from "./OrdersTab";
 
 const HEIGHT_MAP = {
   collapsed: 40,
   half: "40vh",
   full: "80vh",
 } as const;
-
-function StubContent({ message }: { message: string }) {
-  return (
-    <div className="flex items-center justify-center h-full text-xs text-[var(--text-muted)]">
-      {message}
-    </div>
-  );
-}
 
 export function TerminalShell() {
   const { height, activeTab, isOpen } = useTerminalState();
@@ -41,11 +35,9 @@ export function TerminalShell() {
       case "wallet":
         return <WalletTab />;
       case "sessions":
-        return (
-          <StubContent message="No active sessions. Start a copy-trade from the Signal Feed." />
-        );
+        return <SessionsTab />;
       case "orders":
-        return <StubContent message="No orders yet." />;
+        return <OrdersTab />;
     }
   })();
 

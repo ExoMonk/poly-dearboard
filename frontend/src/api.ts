@@ -19,6 +19,10 @@ import type {
   WalletGenerateResponse,
   ImportWalletResponse,
   DeriveCredentialsResponse,
+  WalletBalance,
+  ApprovalResult,
+  DepositAddresses,
+  DepositStatus,
   SortColumn,
   SortOrder,
   Timeframe,
@@ -307,9 +311,126 @@ export async function deleteWallet(walletId: string): Promise<void> {
   if (!res.ok) throw new Error(`Delete wallet failed: ${res.status}`);
 }
 
+// -- Wallet Funding (spec 14) --
+
+export async function fetchWalletBalance(walletId: string): Promise<WalletBalance> {
+  const res = await authFetch(`${BASE}/wallets/${walletId}/balance`);
+  if (!res.ok) throw new Error(`Balance fetch failed: ${res.status}`);
+  return res.json();
+}
+
+export async function approveExchanges(walletId: string): Promise<ApprovalResult> {
+  const res = await authFetch(`${BASE}/wallets/${walletId}/approve`, { method: "POST" });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(body || `Approve failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchDepositAddress(walletId: string): Promise<DepositAddresses> {
+  const res = await authFetch(`${BASE}/wallets/${walletId}/deposit-address`);
+  if (!res.ok) throw new Error(`Deposit address fetch failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchDepositStatus(walletId: string): Promise<DepositStatus> {
+  const res = await authFetch(`${BASE}/wallets/${walletId}/deposit-status`);
+  if (!res.ok) throw new Error(`Deposit status fetch failed: ${res.status}`);
+  return res.json();
+}
+
 export class NotFoundError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "NotFoundError";
   }
+}
+
+// -- Copy-Trade Engine --
+
+export async function createSession(body: import("./types").CreateSessionRequest): Promise<import("./types").CopyTradeSession> {
+  const res = await authFetch(`${BASE}/copytrade/sessions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Create session failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function listSessions(): Promise<import("./types").CopyTradeSession[]> {
+  const res = await authFetch(`${BASE}/copytrade/sessions`);
+  if (!res.ok) throw new Error(`List sessions failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getSession(id: string): Promise<import("./types").CopyTradeSession> {
+  const res = await authFetch(`${BASE}/copytrade/sessions/${id}`);
+  if (!res.ok) throw new Error(`Get session failed: ${res.status}`);
+  return res.json();
+}
+
+export async function updateSession(id: string, action: "pause" | "resume" | "stop"): Promise<import("./types").CopyTradeSession> {
+  const res = await authFetch(`${BASE}/copytrade/sessions/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Update session failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function deleteSession(id: string): Promise<void> {
+  const res = await authFetch(`${BASE}/copytrade/sessions/${id}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`Delete session failed: ${res.status}`);
+}
+
+export async function listSessionOrders(sessionId: string, limit = 50, offset = 0): Promise<import("./types").CopyTradeOrder[]> {
+  const res = await authFetch(`${BASE}/copytrade/sessions/${sessionId}/orders?limit=${limit}&offset=${offset}`);
+  if (!res.ok) throw new Error(`List orders failed: ${res.status}`);
+  return res.json();
+}
+
+export async function closePosition(sessionId: string, assetId: string): Promise<{ order_id: string; status: string }> {
+  const res = await authFetch(`${BASE}/copytrade/close-position`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId, asset_id: assetId }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Close position failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function getSessionStats(sessionId: string): Promise<import("./types").SessionStats> {
+  const res = await authFetch(`${BASE}/copytrade/sessions/${sessionId}/stats`);
+  if (!res.ok) throw new Error(`Get session stats failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getSessionPositions(sessionId: string): Promise<import("./types").CopyTradePosition[]> {
+  const res = await authFetch(`${BASE}/copytrade/sessions/${sessionId}/positions`);
+  if (!res.ok) throw new Error(`Get session positions failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getCopyTradeSummary(): Promise<import("./types").CopyTradeSummary> {
+  const res = await authFetch(`${BASE}/copytrade/summary`);
+  if (!res.ok) throw new Error(`Get copytrade summary failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getActiveTraders(): Promise<string[]> {
+  const res = await authFetch(`${BASE}/copytrade/active-traders`);
+  if (!res.ok) throw new Error(`Get active traders failed: ${res.status}`);
+  return res.json();
 }

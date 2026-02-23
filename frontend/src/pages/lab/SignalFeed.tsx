@@ -1,5 +1,8 @@
 import { motion, AnimatePresence } from "motion/react";
 import useSignalFeed from "../../hooks/useSignalFeed";
+import { useSessions } from "../../hooks/useCopyTrade";
+import { useTerminal } from "../../components/Terminal/TerminalProvider";
+import { StartCopyTradeModal } from "../../components/Terminal/StartCopyTradeModal";
 import ListSelector from "./ListSelector";
 import { useState } from "react";
 import { Link } from "react-router-dom";
@@ -11,6 +14,10 @@ const DEFAULT_TOP_N = 20;
 
 export default function SignalFeed() {
   const [listId, setListId] = useState<string | null>(null);
+  const [showModal, setShowModal] = useState(false);
+  const { data: sessions } = useSessions();
+  const { setActiveTab, setHeight } = useTerminal();
+  const hasActiveSession = sessions?.some((s) => s.status !== "stopped");
   const { trades, alerts, connected, isLagging } = useSignalFeed({
     listId,
     topN: listId ? undefined : DEFAULT_TOP_N,
@@ -28,6 +35,25 @@ export default function SignalFeed() {
         <div className="flex items-center justify-between flex-wrap gap-4">
           <ListSelector selectedId={listId} onSelect={setListId} />
           <div className="flex items-center gap-3">
+            {!hasActiveSession && (
+              <button
+                className="text-xs font-semibold px-3 py-1.5 rounded bg-[var(--neon-green)]/10 text-[var(--neon-green)] border border-[var(--neon-green)]/30 hover:bg-[var(--neon-green)]/20 transition-colors"
+                onClick={() => setShowModal(true)}
+              >
+                Start Copy-Trade
+              </button>
+            )}
+            {hasActiveSession && (
+              <button
+                className="text-xs font-semibold px-3 py-1.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/30 hover:bg-blue-500/20 transition-colors"
+                onClick={() => {
+                  setActiveTab("sessions");
+                  setHeight("half");
+                }}
+              >
+                View Session
+              </button>
+            )}
             {isLagging && (
               <span className="text-xs font-semibold text-[var(--accent-orange)] bg-[var(--accent-orange)]/10 px-2 py-1 rounded-full">
                 Signal lag — some trades may be delayed
@@ -170,6 +196,7 @@ export default function SignalFeed() {
             )}
           </div>
         </div>
+      <StartCopyTradeModal isOpen={showModal} onClose={() => setShowModal(false)} />
     </div>
   );
 }

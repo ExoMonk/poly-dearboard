@@ -1,5 +1,15 @@
 import { useState, useEffect } from "react";
-import { useWallets, useGenerateWallet, useImportWallet, useDeriveCredentials, useDeleteWallet } from "../../hooks/useWallet";
+import {
+  useWallets,
+  useGenerateWallet,
+  useImportWallet,
+  useDeriveCredentials,
+  useDeleteWallet,
+  useWalletBalance,
+  useApproveExchanges,
+  useDepositAddress,
+  useDepositStatus,
+} from "../../hooks/useWallet";
 import { useTerminalDispatch } from "./TerminalProvider";
 import { useAuth } from "../../context/AuthContext";
 import type { TradingWalletInfo, WalletGenerateResponse } from "../../types";
@@ -44,6 +54,163 @@ function StatusBadge({ status }: { status: string }) {
     }`}>
       {status.charAt(0).toUpperCase() + status.slice(1)}
     </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Balance + Funding section (shown for credentialed wallets)
+// ---------------------------------------------------------------------------
+
+function BalanceSection({
+  walletId,
+  walletAddress,
+  proxyAddress,
+  addLog,
+}: {
+  walletId: string;
+  walletAddress: string;
+  proxyAddress: string | null;
+  addLog: (level: "info" | "warn" | "error" | "success", msg: string) => void;
+}) {
+  const { data: balance } = useWalletBalance(walletId);
+  const { data: depositAddr } = useDepositAddress(walletId);
+  const { data: depositStatus } = useDepositStatus(walletId);
+  const approveMutation = useApproveExchanges();
+  const [showFunding, setShowFunding] = useState(false);
+
+  const handleApprove = async () => {
+    try {
+      const result = await approveMutation.mutateAsync(walletId);
+      if (result.already_approved) {
+        addLog("info", "Exchanges already approved");
+      } else {
+        const hashes = [result.ctf_tx_hash, result.neg_risk_tx_hash].filter(Boolean);
+        addLog("success", `Exchanges approved: ${hashes.join(", ")}`);
+      }
+    } catch (e) {
+      addLog("error", `Approval failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  if (!balance) return null;
+
+  const allApproved = balance.ctf_exchange_approved && balance.neg_risk_exchange_approved;
+  const staleSecs = balance.last_checked_secs_ago ?? 0;
+  const staleWarning = staleSecs > 120;
+
+  return (
+    <div className="mt-2 pt-2 border-t border-[var(--border-glow)]">
+      {/* Balance row */}
+      <div className="flex items-center justify-between text-[11px]">
+        <div className="flex items-center gap-2">
+          <span className="text-[var(--text-muted)]">USDC</span>
+          <span className="text-[var(--text-primary)] font-mono font-medium">
+            ${balance.usdc_balance}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[var(--text-muted)] font-mono text-[10px]">
+            {balance.pol_balance} POL
+          </span>
+          {staleWarning && (
+            <span className="text-yellow-400 text-[10px]" title={`Last checked ${staleSecs}s ago`}>
+              stale
+            </span>
+          )}
+        </div>
+      </div>
+
+      {balance.needs_gas && (
+        <p className="mt-1 text-[10px] text-yellow-400">
+          Low POL — send ~0.01 POL for gas
+        </p>
+      )}
+
+      {/* Approval status */}
+      <div className="flex items-center gap-3 mt-1.5 text-[11px]">
+        <span className="text-[var(--text-muted)]">Approvals</span>
+        <span className={balance.ctf_exchange_approved ? "text-green-400" : "text-red-400"}>
+          CTF {balance.ctf_exchange_approved ? "\u2713" : "\u2717"}
+        </span>
+        <span className={balance.neg_risk_exchange_approved ? "text-green-400" : "text-red-400"}>
+          NegRisk {balance.neg_risk_exchange_approved ? "\u2713" : "\u2717"}
+        </span>
+        {!allApproved && (
+          <button
+            onClick={handleApprove}
+            disabled={approveMutation.isPending || balance.needs_gas}
+            className="px-1.5 py-0.5 text-[10px] rounded bg-[var(--accent-blue)] text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
+          >
+            {approveMutation.isPending ? "Approving..." : "Approve All"}
+          </button>
+        )}
+      </div>
+
+      {/* Fund wallet toggle */}
+      <button
+        onClick={() => setShowFunding(!showFunding)}
+        className="mt-2 text-[11px] text-[var(--accent-blue)] hover:underline"
+      >
+        {showFunding ? "Hide funding" : "Fund wallet"}
+      </button>
+
+      {showFunding && (
+        <div className="mt-2 space-y-2 text-[11px]">
+          {/* Direct transfer */}
+          <div className="px-2 py-1.5 rounded bg-white/[0.03] border border-[var(--border-glow)]">
+            <p className="text-[var(--text-muted)] mb-1">Direct Transfer (USDC.e on Polygon)</p>
+            <div className="flex items-center gap-1 font-mono text-[var(--text-primary)]">
+              <span>{truncateAddress(proxyAddress ?? walletAddress)}</span>
+              <CopyButton text={proxyAddress ?? walletAddress} />
+            </div>
+          </div>
+
+          {/* Bridge addresses */}
+          {depositAddr && (
+            <div className="px-2 py-1.5 rounded bg-white/[0.03] border border-[var(--border-glow)]">
+              <p className="text-[var(--text-muted)] mb-1">Bridge (Cross-Chain)</p>
+              {depositAddr.evm && (
+                <div className="flex items-center gap-1 font-mono text-[10px]">
+                  <span className="text-[var(--text-muted)] w-8">EVM</span>
+                  <span className="text-[var(--text-primary)]">{truncateAddress(depositAddr.evm)}</span>
+                  <CopyButton text={depositAddr.evm} />
+                </div>
+              )}
+              {depositAddr.svm && (
+                <div className="flex items-center gap-1 font-mono text-[10px]">
+                  <span className="text-[var(--text-muted)] w-8">SOL</span>
+                  <span className="text-[var(--text-primary)]">{truncateAddress(depositAddr.svm)}</span>
+                  <CopyButton text={depositAddr.svm} />
+                </div>
+              )}
+              {depositAddr.btc && (
+                <div className="flex items-center gap-1 font-mono text-[10px]">
+                  <span className="text-[var(--text-muted)] w-8">BTC</span>
+                  <span className="text-[var(--text-primary)]">{truncateAddress(depositAddr.btc)}</span>
+                  <CopyButton text={depositAddr.btc} />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Pending deposits */}
+          {depositStatus && depositStatus.pending.length > 0 && (
+            <div className="px-2 py-1.5 rounded bg-yellow-500/5 border border-yellow-500/20">
+              <p className="text-yellow-400 mb-1">Pending Deposits</p>
+              {depositStatus.pending.map((d, i) => (
+                <div key={i} className="text-[10px] text-[var(--text-secondary)]">
+                  {d.amount} {d.token} from {d.from_chain} — {d.status}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <InfoNote>
+            To withdraw, import your trading wallet key into MetaMask.
+          </InfoNote>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -199,12 +366,14 @@ function WalletCard({
   onDelete,
   isDeriving,
   isDeleting,
+  addLog,
 }: {
   wallet: TradingWalletInfo;
   onDerive: (id: string) => void;
   onDelete: (id: string) => void;
   isDeriving: boolean;
   isDeleting: boolean;
+  addLog: (level: "info" | "warn" | "error" | "success", msg: string) => void;
 }) {
   return (
     <div className="px-3 py-2.5 rounded border border-[var(--border-glow)] bg-white/[0.02]">
@@ -245,6 +414,16 @@ function WalletCard({
         )}
       </div>
 
+      {/* Balance + funding section for credentialed wallets */}
+      {wallet.has_clob_credentials && (
+        <BalanceSection
+          walletId={wallet.id}
+          walletAddress={wallet.address}
+          proxyAddress={wallet.proxy_address}
+          addLog={addLog}
+        />
+      )}
+
       <div className="flex justify-end mt-2">
         <button
           onClick={() => onDelete(wallet.id)}
@@ -271,6 +450,7 @@ function WalletListView({
   onDelete,
   derivingId,
   deletingId,
+  addLog,
 }: {
   wallets: TradingWalletInfo[];
   onAdd: () => void;
@@ -278,6 +458,7 @@ function WalletListView({
   onDelete: (id: string) => void;
   derivingId: string | null;
   deletingId: string | null;
+  addLog: (level: "info" | "warn" | "error" | "success", msg: string) => void;
 }) {
   return (
     <div className="flex flex-col h-full px-4 py-3 overflow-y-auto">
@@ -304,6 +485,7 @@ function WalletListView({
             onDelete={onDelete}
             isDeriving={derivingId === w.id}
             isDeleting={deletingId === w.id}
+            addLog={addLog}
           />
         ))}
       </div>
@@ -367,7 +549,7 @@ export function WalletTab() {
   const importMutation = useImportWallet();
   const deriveMutation = useDeriveCredentials();
   const deleteMutation = useDeleteWallet();
-  const { setWalletStatus, addLog } = useTerminalDispatch();
+  const { setWalletStatus, setWalletBalance, addLog } = useTerminalDispatch();
 
   const [uiState, setUIState] = useState<UIState>("loading");
   const [generateResult, setGenerateResult] = useState<WalletGenerateResponse | null>(null);
@@ -375,7 +557,11 @@ export function WalletTab() {
   const [derivingId, setDerivingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  // Sync query state → UI state
+  // Find the first credentialed wallet to track balance in status bar
+  const primaryWallet = wallets?.find((w) => w.has_clob_credentials);
+  const { data: primaryBalance } = useWalletBalance(primaryWallet?.id ?? null);
+
+  // Sync query state -> UI state + terminal status
   useEffect(() => {
     if (isLoading) {
       setUIState("loading");
@@ -391,12 +577,22 @@ export function WalletTab() {
     // Update terminal wallet status
     if (!wallets || wallets.length === 0) {
       setWalletStatus("none");
+      setWalletBalance(null);
+    } else if (primaryBalance) {
+      const allApproved = primaryBalance.ctf_exchange_approved && primaryBalance.neg_risk_exchange_approved;
+      const hasFunds = parseFloat(primaryBalance.usdc_balance) > 0;
+      setWalletBalance(primaryBalance.usdc_balance);
+      if (hasFunds && allApproved) {
+        setWalletStatus("funded");
+      } else {
+        setWalletStatus("setup");
+      }
     } else if (wallets.some((w) => w.has_clob_credentials)) {
-      setWalletStatus("setup"); // "funded" needs balance check (spec 14)
+      setWalletStatus("setup");
     } else {
       setWalletStatus("setup");
     }
-  }, [wallets, isLoading, generateResult, uiState, setWalletStatus]);
+  }, [wallets, isLoading, generateResult, uiState, setWalletStatus, setWalletBalance, primaryBalance]);
 
   if (!isAuthenticated) {
     return (
@@ -481,6 +677,7 @@ export function WalletTab() {
           onDelete={handleDelete}
           derivingId={derivingId}
           deletingId={deletingId}
+          addLog={addLog}
         />
       );
 
