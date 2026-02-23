@@ -8,6 +8,10 @@ import { TerminalStatusBar } from "./TerminalStatusBar";
 import { WalletTab } from "./WalletTab";
 import { SessionsTab } from "./SessionsTab";
 import { OrdersTab } from "./OrdersTab";
+import { useCopyTradeWs } from "../../hooks/useCopyTrade";
+import useAlerts from "../../hooks/useAlerts";
+import { useCopyTradeLogger } from "../../hooks/useCopyTradeLogger";
+import { useAlertLogger } from "../../hooks/useAlertLogger";
 
 const HEIGHT_MAP = {
   collapsed: 40,
@@ -17,6 +21,12 @@ const HEIGHT_MAP = {
 
 export function TerminalShell() {
   const { height, activeTab, isOpen } = useTerminalState();
+
+  // Wire event loggers (WS owned here, data passed to logger hooks)
+  const { updates } = useCopyTradeWs();
+  const { alerts } = useAlerts();
+  useCopyTradeLogger(updates);
+  useAlertLogger(alerts);
 
   // Set CSS custom property for main content padding
   useEffect(() => {

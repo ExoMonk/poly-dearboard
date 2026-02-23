@@ -8,6 +8,7 @@ import {
 } from "react";
 import type {
   LogEntry,
+  LogSource,
   TerminalHeight,
   TerminalTab,
   WalletStatus,
@@ -15,6 +16,7 @@ import type {
 
 const MAX_LOGS = 500;
 const LS_KEY = "terminal-state";
+const LOGS_LS_KEY = "terminal-logs";
 
 // --- State ---
 
@@ -100,6 +102,29 @@ function persistState(height: TerminalHeight, activeTab: TerminalTab) {
   }
 }
 
+// --- Persisted logs ---
+
+function loadPersistedLogs(): LogEntry[] {
+  try {
+    const raw = localStorage.getItem(LOGS_LS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (e: unknown): e is LogEntry =>
+          !!e && typeof e === "object" && "id" in e && "timestamp" in e,
+      )
+      .slice(-MAX_LOGS)
+      .map((entry) => ({
+        ...entry,
+        source: entry.source ?? ("wallet" as const),
+      }));
+  } catch {
+    return [];
+  }
+}
+
 // --- Contexts (split to avoid re-renders) ---
 
 interface TerminalStateContextValue extends TerminalState {}
@@ -108,7 +133,7 @@ interface TerminalDispatchContextValue {
   toggle: () => void;
   setHeight: (h: TerminalHeight) => void;
   setActiveTab: (tab: TerminalTab) => void;
-  addLog: (level: LogEntry["level"], message: string, meta?: Record<string, string>) => void;
+  addLog: (level: LogEntry["level"], message: string, meta?: Record<string, string>, source?: LogSource) => void;
   clearLogs: () => void;
   setWalletStatus: (status: WalletStatus) => void;
   setActiveSessions: (count: number) => void;
@@ -122,12 +147,13 @@ const TerminalDispatchContext = createContext<TerminalDispatchContextValue | nul
 
 export function TerminalProvider({ children }: { children: ReactNode }) {
   const persisted = useMemo(loadPersistedState, []);
+  const persistedLogs = useMemo(loadPersistedLogs, []);
 
   const [state, dispatch] = useReducer(reducer, {
     isOpen: persisted.height !== "collapsed",
     height: persisted.height,
     activeTab: persisted.activeTab,
-    logs: [],
+    logs: persistedLogs,
     walletStatus: "none",
     activeSessions: 0,
     walletBalance: null,
@@ -137,6 +163,18 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     persistState(state.height, state.activeTab);
   }, [state.height, state.activeTab]);
+
+  // Persist logs (debounced 2s)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem(LOGS_LS_KEY, JSON.stringify(state.logs));
+      } catch {
+        // storage full — silently fail
+      }
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [state.logs]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -160,12 +198,15 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
       toggle: () => dispatch({ type: "TOGGLE" }),
       setHeight: (height) => dispatch({ type: "SET_HEIGHT", height }),
       setActiveTab: (tab) => dispatch({ type: "SET_TAB", tab }),
-      addLog: (level, message, meta) =>
+      addLog: (level, message, meta, source = "wallet") =>
         dispatch({
           type: "ADD_LOG",
-          entry: { id: crypto.randomUUID(), timestamp: Date.now(), level, message, meta },
+          entry: { id: crypto.randomUUID(), timestamp: Date.now(), level, source, message, meta },
         }),
-      clearLogs: () => dispatch({ type: "CLEAR_LOGS" }),
+      clearLogs: () => {
+        dispatch({ type: "CLEAR_LOGS" });
+        try { localStorage.removeItem(LOGS_LS_KEY); } catch {}
+      },
       setWalletStatus: (status) => dispatch({ type: "SET_WALLET_STATUS", status }),
       setActiveSessions: (count) => dispatch({ type: "SET_ACTIVE_SESSIONS", count }),
       setWalletBalance: (balance) => dispatch({ type: "SET_WALLET_BALANCE", balance }),

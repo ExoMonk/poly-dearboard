@@ -467,11 +467,14 @@ export interface PendingDeposit {
   tx_hash: string | null;
 }
 
-// Terminal Shell (spec 12)
+// Terminal Shell (spec 12, extended in spec 17)
+export type LogSource = "wallet" | "copytrade" | "alert";
+
 export interface LogEntry {
   id: string;
   timestamp: number;
   level: "info" | "warn" | "error" | "success";
+  source: LogSource;
   message: string;
   meta?: Record<string, string>;
 }
