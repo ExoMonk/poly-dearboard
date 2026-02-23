@@ -638,30 +638,25 @@ pub async fn get_summary(
     State(state): State<AppState>,
     AuthUser(owner): AuthUser,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let (sessions, total_orders) = {
+    // Single lock acquisition: load sessions, order count, and all positions at once
+    let (active_sessions, total_orders, all_positions) = {
         let conn = state.user_db.lock().unwrap_or_else(|p| p.into_inner());
         let sessions = db::get_copytrade_sessions(&conn, &owner)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         let total_orders = db::get_total_order_count(&conn, &owner)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-        (sessions, total_orders)
-    };
-
-    let active_sessions = sessions
-        .iter()
-        .filter(|s| s.status == "running" || s.status == "paused")
-        .count() as u32;
-
-    // Load all positions across all sessions for CLOB-based P&L
-    let all_positions: Vec<(f64, Vec<db::PositionRaw>)> = {
-        let conn = state.user_db.lock().unwrap_or_else(|p| p.into_inner());
-        sessions
+        let active = sessions
+            .iter()
+            .filter(|s| s.status == "running" || s.status == "paused")
+            .count() as u32;
+        let positions: Vec<(f64, Vec<db::PositionRaw>)> = sessions
             .iter()
             .map(|s| {
-                let positions = db::get_positions_raw(&conn, &s.id).unwrap_or_default();
-                (s.initial_capital, positions)
+                let pos = db::get_positions_raw(&conn, &s.id).unwrap_or_default();
+                (s.initial_capital, pos)
             })
-            .collect()
+            .collect();
+        (active, total_orders, positions)
     };
 
     // Collect all unique asset IDs for a single batch CLOB fetch
