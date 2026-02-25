@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useSessions, useUpdateSession, useDeleteSession, useCreateSession, useSessionStats } from "../../hooks/useCopyTrade";
 import { useTraderLists } from "../../hooks/useTraderLists";
+import { useWallets } from "../../hooks/useWallet";
 import { useTerminalDispatch } from "./TerminalProvider";
 import { PositionList } from "./PositionList";
 import type { CopyTradeSession, SessionStatus, CopyOrderType, CreateSessionRequest } from "../../types";
@@ -44,9 +45,13 @@ function SessionCard({ session }: { session: CopyTradeSession }) {
             <span className={`text-xs font-mono px-1.5 py-0.5 rounded border ${STATUS_BADGE[session.status]}`}>
               {session.status}
             </span>
-            {session.simulate && (
+            {session.simulate ? (
               <span className="text-xs font-mono px-1.5 py-0.5 rounded border bg-blue-500/20 text-blue-400 border-blue-500/30">
                 SIM
+              </span>
+            ) : (
+              <span className="text-xs font-mono px-1.5 py-0.5 rounded border bg-red-500/20 text-red-400 border-red-500/30">
+                LIVE
               </span>
             )}
             <span className="text-[10px] text-[var(--text-muted)]">{expanded ? "\u25B2" : "\u25BC"}</span>
@@ -80,6 +85,37 @@ function SessionCard({ session }: { session: CopyTradeSession }) {
             <div className="text-[var(--text-muted)]">Slippage</div>
             <div className="font-mono">{session.max_slippage_bps}bps max</div>
           </div>
+        </div>
+
+        {!session.simulate && session.wallet_id && (
+          <div className="text-xs mb-2">
+            <div className="text-[var(--text-muted)]">Wallet</div>
+            <div className="font-mono">{session.wallet_id.slice(0, 8)}</div>
+          </div>
+        )}
+
+        {/* Exit strategy chips + utilization */}
+        <div className="flex flex-wrap gap-1 text-[10px] mb-1">
+          {session.take_profit_pct != null && (
+            <span className="px-1.5 py-0.5 rounded bg-green-500/10 text-green-400 border border-green-500/20">
+              TP: {session.take_profit_pct}%
+            </span>
+          )}
+          {session.stop_loss_pct != null && (
+            <span className="px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20">
+              SL: {session.stop_loss_pct}%
+            </span>
+          )}
+          {session.mirror_close && (
+            <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+              Mirror
+            </span>
+          )}
+          {stats && session.utilization_cap < 1.0 && stats.capital_utilization >= session.utilization_cap && (
+            <span className="px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-400 border border-orange-500/20">
+              Buy-gated
+            </span>
+          )}
         </div>
       </div>
 
@@ -179,6 +215,7 @@ function SessionCard({ session }: { session: CopyTradeSession }) {
 function CreateSessionForm({ onClose }: { onClose: () => void }) {
   const create = useCreateSession();
   const { data: lists } = useTraderLists();
+  const { data: wallets } = useWallets();
 
   const [source, setSource] = useState<"top_n" | "list">("top_n");
   const [topN, setTopN] = useState(10);
@@ -189,18 +226,46 @@ function CreateSessionForm({ onClose }: { onClose: () => void }) {
   const [maxSlippage, setMaxSlippage] = useState(200);
   const [orderType, setOrderType] = useState<CopyOrderType>("FOK");
   const [maxLossPct, setMaxLossPct] = useState(20);
+  const [simulate, setSimulate] = useState(true);
+  const [showLiveConfirm, setShowLiveConfirm] = useState(false);
+  const [walletId, setWalletId] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [minSourceUsdc, setMinSourceUsdc] = useState(50);
+  const [utilizationCap, setUtilizationCap] = useState(100);
+  const [maxOpenPositions, setMaxOpenPositions] = useState(10);
+  const [takeProfitPct, setTakeProfitPct] = useState<number | "">("");
+  const [stopLossPct, setStopLossPct] = useState<number | "">("");
+  const [mirrorClose, setMirrorClose] = useState(true);
+  const [healthInterval, setHealthInterval] = useState(30);
   const [error, setError] = useState("");
+  const liveWallets = (wallets ?? []).filter((w) => w.has_clob_credentials);
 
   const handleSubmit = () => {
     setError("");
+    if (!simulate && capital > 10) {
+      setError("Live mode capital is capped at $10 USDC during beta.");
+      return;
+    }
+    if (!simulate && !walletId) {
+      setError("Select a wallet for live trading.");
+      return;
+    }
     const body: CreateSessionRequest = {
+      ...(!simulate ? { wallet_id: walletId } : {}),
       copy_pct: copyPct / 100,
       max_position_usdc: maxPosition,
       max_slippage_bps: maxSlippage,
       order_type: orderType,
       initial_capital: capital,
-      simulate: true,
+      simulate,
       max_loss_pct: maxLossPct,
+      min_source_usdc: minSourceUsdc,
+      utilization_cap: utilizationCap / 100,
+      max_open_positions: maxOpenPositions,
+      ...(takeProfitPct !== "" ? { take_profit_pct: takeProfitPct } : {}),
+      ...(stopLossPct !== "" ? { stop_loss_pct: stopLossPct } : {}),
+      mirror_close: mirrorClose,
+      health_interval_secs: healthInterval,
       ...(source === "top_n" ? { top_n: topN } : { list_id: listId }),
     };
     create.mutate(body, {
@@ -215,7 +280,7 @@ function CreateSessionForm({ onClose }: { onClose: () => void }) {
   return (
     <div className="p-3 space-y-3 overflow-y-auto h-full">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold text-[var(--text-primary)]">Start Simulation</span>
+        <span className="text-xs font-semibold text-[var(--text-primary)]">{simulate ? "Start Simulation" : "Start Live Trading"}</span>
         <button onClick={onClose} className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)]">Cancel</button>
       </div>
 
@@ -257,8 +322,8 @@ function CreateSessionForm({ onClose }: { onClose: () => void }) {
 
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <div className={labelCls}>Capital (USDC)</div>
-          <input type="number" className={inputCls} value={capital} min={10} onChange={(e) => setCapital(Number(e.target.value))} />
+          <div className={labelCls}>Capital (USDC){!simulate && " (max $10 beta)"}</div>
+          <input type="number" className={inputCls} value={capital} min={1} max={simulate ? undefined : 10} onChange={(e) => setCapital(Number(e.target.value))} />
         </div>
         <div>
           <div className={labelCls}>Copy %</div>
@@ -291,14 +356,128 @@ function CreateSessionForm({ onClose }: { onClose: () => void }) {
         </div>
       </div>
 
+      {!simulate && (
+        <div>
+          <div className={labelCls}>Live Wallet</div>
+          <select className={inputCls} value={walletId} onChange={(e) => setWalletId(e.target.value)}>
+            <option value="">Choose credentialed wallet...</option>
+            {liveWallets.map((w) => (
+              <option key={w.id} value={w.id}>{w.address.slice(0, 8)}... ({w.status})</option>
+            ))}
+          </select>
+          {liveWallets.length === 0 && (
+            <div className="text-[10px] text-red-400 mt-1">No credentialed wallet available. Derive credentials in Wallet tab first.</div>
+          )}
+        </div>
+      )}
+
+      {/* Advanced Settings */}
+      <div>
+        <button
+          className="text-[10px] text-[var(--text-muted)] hover:text-[var(--text-primary)] uppercase tracking-wider"
+          onClick={() => setShowAdvanced(!showAdvanced)}
+        >
+          {showAdvanced ? "\u25B2" : "\u25BC"} Advanced Settings
+        </button>
+      </div>
+
+      {showAdvanced && (
+        <>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <div className={labelCls}>Min Source Trade ($)</div>
+              <input type="number" className={inputCls} value={minSourceUsdc} min={0} onChange={(e) => setMinSourceUsdc(Number(e.target.value))} />
+            </div>
+            <div>
+              <div className={labelCls}>Max Open Positions</div>
+              <input type="number" className={inputCls} value={maxOpenPositions} min={1} max={100} onChange={(e) => setMaxOpenPositions(Number(e.target.value))} />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <div className={labelCls}>Utilization Cap (%)</div>
+              <input type="number" className={inputCls} value={utilizationCap} min={10} max={100} onChange={(e) => setUtilizationCap(Number(e.target.value))} />
+            </div>
+            <div>
+              <div className={labelCls}>Health Check (sec)</div>
+              <input type="number" className={inputCls} value={healthInterval} min={10} max={300} onChange={(e) => setHealthInterval(Number(e.target.value))} />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <div className={labelCls}>Take Profit (%)</div>
+              <input type="number" className={inputCls} value={takeProfitPct} min={1} max={500} placeholder="Off" onChange={(e) => setTakeProfitPct(e.target.value ? Number(e.target.value) : "")} />
+            </div>
+            <div>
+              <div className={labelCls}>Stop Loss (%)</div>
+              <input type="number" className={inputCls} value={stopLossPct} min={1} max={100} placeholder="Off" onChange={(e) => setStopLossPct(e.target.value ? Number(e.target.value) : "")} />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="mirrorClose"
+              checked={mirrorClose}
+              onChange={(e) => setMirrorClose(e.target.checked)}
+              className="accent-[var(--neon-green)]"
+            />
+            <label htmlFor="mirrorClose" className="text-xs text-[var(--text-muted)]">Mirror source sells (close when they sell)</label>
+          </div>
+        </>
+      )}
+
+      {/* Mode: Simulate / Live */}
+      <div>
+        <div className={labelCls}>Mode</div>
+        <div className="flex gap-1.5">
+          <button
+            className={`px-2 py-1 text-xs rounded border ${simulate ? "bg-[var(--neon-green)]/10 text-[var(--neon-green)] border-[var(--neon-green)]/30" : "bg-[var(--surface-2)] text-[var(--text-muted)] border-[var(--border-subtle)]"}`}
+            onClick={() => { setSimulate(true); setShowLiveConfirm(false); setError(""); }}
+          >
+            Simulate
+          </button>
+          <button
+            className={`px-2 py-1 text-xs rounded border ${!simulate ? "bg-red-500/10 text-red-400 border-red-500/30" : "bg-[var(--surface-2)] text-[var(--text-muted)] border-[var(--border-subtle)]"}`}
+            onClick={() => { if (simulate) setShowLiveConfirm(true); }}
+          >
+            Live
+          </button>
+        </div>
+      </div>
+
+      {showLiveConfirm && simulate && (
+        <div className="border border-red-500/30 rounded p-2 bg-red-500/5">
+          <p className="text-[10px] text-red-300 mb-2">
+            Live mode places real orders using your wallet funds. This is irreversible.
+          </p>
+          <div className="flex gap-2">
+            <button
+              className="px-2 py-0.5 text-[10px] rounded border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20"
+              onClick={() => { setSimulate(false); setShowLiveConfirm(false); if (capital > 10) setCapital(10); }}
+            >
+              Confirm Live
+            </button>
+            <button
+              className="px-2 py-0.5 text-[10px] rounded border border-[var(--border-subtle)] text-[var(--text-muted)]"
+              onClick={() => setShowLiveConfirm(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {error && <div className="text-xs text-red-400">{error}</div>}
 
       <button
-        className="w-full py-1.5 text-xs font-semibold rounded bg-blue-500/20 text-blue-400 border border-blue-500/30 hover:bg-blue-500/30 disabled:opacity-50"
+        className={`w-full py-1.5 text-xs font-semibold rounded border disabled:opacity-50 ${simulate ? "bg-blue-500/20 text-blue-400 border-blue-500/30 hover:bg-blue-500/30" : "bg-red-500/10 text-red-400 border-red-500/30 hover:bg-red-500/20"}`}
         onClick={handleSubmit}
-        disabled={create.isPending || (source === "list" && !listId)}
+        disabled={create.isPending || (source === "list" && !listId) || (!simulate && !walletId)}
       >
-        {create.isPending ? "Starting..." : "Start Simulation"}
+        {create.isPending ? "Starting..." : simulate ? "Start Simulation" : "Start Live Trading"}
       </button>
     </div>
   );

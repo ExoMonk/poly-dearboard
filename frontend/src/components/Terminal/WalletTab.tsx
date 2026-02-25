@@ -6,6 +6,7 @@ import {
   useDeriveCredentials,
   useDeleteWallet,
   useWalletBalance,
+  useEnableTrading,
   useApproveExchanges,
   useDepositAddress,
   useDepositStatus,
@@ -76,7 +77,10 @@ function BalanceSection({
   const { data: depositAddr } = useDepositAddress(walletId);
   const { data: depositStatus } = useDepositStatus(walletId);
   const approveMutation = useApproveExchanges();
+  const enableTradingMutation = useEnableTrading();
   const [showFunding, setShowFunding] = useState(false);
+  const [deploying, setDeploying] = useState(false);
+  const [deployFailed, setDeployFailed] = useState(false);
 
   const handleApprove = async () => {
     try {
@@ -84,11 +88,28 @@ function BalanceSection({
       if (result.already_approved) {
         addLog("info", "Exchanges already approved");
       } else {
-        const hashes = [result.ctf_tx_hash, result.neg_risk_tx_hash].filter(Boolean);
-        addLog("success", `Exchanges approved: ${hashes.join(", ")}`);
+        addLog("success", `Exchanges approved${result.tx_hash ? `: ${result.tx_hash}` : ""}`);
       }
     } catch (e) {
       addLog("error", `Approval failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  const handleEnableTrading = async () => {
+    try {
+      setDeploying(true);
+      setDeployFailed(false);
+      const result = await enableTradingMutation.mutateAsync(walletId);
+      if (result.status === "already_deployed" || result.status === "deployed") {
+        addLog("success", "Trading enabled — Safe proxy deployed");
+      } else {
+        addLog("info", "Safe deployment submitted to relayer");
+      }
+    } catch (e) {
+      setDeployFailed(true);
+      addLog("error", `Enable trading failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setDeploying(false);
     }
   };
 
@@ -145,6 +166,34 @@ function BalanceSection({
           </button>
         )}
       </div>
+
+      {/* Safe proxy deployment status */}
+      {!balance.safe_deployed && (
+        <div className="flex items-center gap-3 mt-1.5 text-[11px]">
+          <span className="text-[var(--text-muted)]">Trading</span>
+          {deploying ? (
+            <span className="text-yellow-400">Deploying Safe...</span>
+          ) : deployFailed ? (
+            <>
+              <span className="text-red-400">Deploy failed</span>
+              <button
+                onClick={handleEnableTrading}
+                className="px-1.5 py-0.5 text-[10px] rounded bg-[var(--accent-blue)] text-white hover:opacity-90 transition-opacity"
+              >
+                Retry
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={handleEnableTrading}
+              disabled={enableTradingMutation.isPending}
+              className="px-1.5 py-0.5 text-[10px] rounded bg-[var(--accent-blue)] text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
+            >
+              {enableTradingMutation.isPending ? "Enabling..." : "Enable Trading"}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Fund wallet toggle */}
       <button

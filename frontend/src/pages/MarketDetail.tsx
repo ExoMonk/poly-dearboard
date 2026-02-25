@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "motion/react";
-import { fetchRecentTrades, fetchMarketResolve } from "../api";
+import { fetchRecentTrades, fetchMarketResolve, fetchMarketRedemptions } from "../api";
 import Spinner from "../components/Spinner";
 import LivePriceChart from "../charts/LivePriceChart";
 import useMarketWs from "../hooks/useMarketWs";
@@ -177,6 +177,25 @@ export default function MarketDetail() {
   const liveYes = latestYesPrice ?? fallbackYes;
   const liveNo = !isNaN(liveYes) ? 1 - liveYes : NaN;
 
+  // Find condition_id and resolved status from any resolved entry
+  const conditionId = useMemo(() => {
+    if (!resolved) return undefined;
+    for (const info of Object.values(resolved)) {
+      if (info.condition_id) return info.condition_id;
+    }
+    return undefined;
+  }, [resolved]);
+
+  const firstTrade = mergedTrades[0];
+  const resolvedFirst = firstTrade && resolved?.[firstTrade.asset_id];
+  const isResolved = resolvedFirst ? !resolvedFirst.active : false;
+
+  const { data: redemptionsData } = useQuery({
+    queryKey: ["market-redemptions", conditionId],
+    queryFn: () => fetchMarketRedemptions(conditionId!),
+    enabled: !!conditionId && isResolved,
+  });
+
   if (isLoading) return <Spinner />;
   if (error)
     return (
@@ -184,9 +203,6 @@ export default function MarketDetail() {
         Failed to load market data
       </div>
     );
-
-  const firstTrade = mergedTrades[0];
-  const resolvedFirst = firstTrade && resolved?.[firstTrade.asset_id];
   const question =
     resolvedFirst?.question || firstTrade?.question || "Unknown Market";
 
@@ -343,6 +359,69 @@ export default function MarketDetail() {
           </div>
         )}
       </div>
+
+      {/* Who Cashed Out — only for resolved markets */}
+      {isResolved && redemptionsData && redemptionsData.redemptions.length > 0 && (
+        <div>
+          <div className="flex items-center gap-3 mb-4">
+            <h2 className="text-lg font-bold gradient-text">Who Cashed Out</h2>
+            <span className="text-xs text-[var(--text-secondary)]">
+              {redemptionsData.total} redemption{redemptionsData.total !== 1 ? "s" : ""} &middot;{" "}
+              {formatUsd(String(redemptionsData.redemptions.reduce((sum, r) => sum + r.payout_usdc, 0)))} total
+            </span>
+          </div>
+          <div className="glass overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-[var(--border-glow)] text-[var(--text-secondary)] text-xs uppercase tracking-widest">
+                    <th className="px-4 py-3 text-left">Trader</th>
+                    <th className="px-4 py-3 text-right">Payout</th>
+                    <th className="px-4 py-3 text-right">Date</th>
+                    <th className="px-4 py-3 text-right">Tx</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {redemptionsData.redemptions.map((r, i) => (
+                    <motion.tr
+                      key={`${r.tx_hash}-${i}`}
+                      initial={{ opacity: 0, x: -8 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ duration: 0.25, delay: i * 0.02 }}
+                      className="border-b border-[var(--border-subtle)] row-glow"
+                    >
+                      <td className="px-4 py-3">
+                        <Link
+                          to={`/trader/${r.redeemer}`}
+                          className="text-[var(--accent-cyan)] hover:text-[var(--accent-blue)] font-mono text-xs transition-colors duration-200"
+                        >
+                          {shortenAddress(r.redeemer)}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono glow-green">
+                        {formatUsd(String(r.payout_usdc))}
+                      </td>
+                      <td className="px-4 py-3 text-right text-[var(--text-secondary)] text-xs">
+                        {r.redeemed_at ? timeAgo(r.redeemed_at) : "—"}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <a
+                          href={polygonscanTx(r.tx_hash)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[var(--text-secondary)] opacity-40 hover:opacity-100 hover:text-[var(--accent-blue)] font-mono text-xs transition-all duration-200"
+                        >
+                          {shortenAddress(r.tx_hash)}
+                        </a>
+                      </td>
+                    </motion.tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

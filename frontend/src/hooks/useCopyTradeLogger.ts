@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTerminalDispatch } from "../components/Terminal/TerminalProvider";
 import type { CopyTradeUpdate } from "../types";
 
@@ -28,6 +29,7 @@ function updateKey(u: CopyTradeUpdate): string | null {
 
 export function useCopyTradeLogger(updates: CopyTradeUpdate[]) {
   const { addLog } = useTerminalDispatch();
+  const queryClient = useQueryClient();
   const processedRef = useRef<Set<string>>(new Set());
   const lastBalanceRef = useRef<string | null>(null);
   const seededRef = useRef(false);
@@ -76,6 +78,7 @@ export function useCopyTradeLogger(updates: CopyTradeUpdate[]) {
             },
             "copytrade",
           );
+          queryClient.invalidateQueries({ queryKey: ["copytrade", "orders"] });
           break;
         case "OrderFilled":
           addLog(
@@ -89,6 +92,9 @@ export function useCopyTradeLogger(updates: CopyTradeUpdate[]) {
             },
             "copytrade",
           );
+          queryClient.invalidateQueries({ queryKey: ["copytrade", "orders"] });
+          queryClient.invalidateQueries({ queryKey: ["copytrade", "stats"] });
+          queryClient.invalidateQueries({ queryKey: ["copytrade", "sessions"] });
           break;
         case "OrderFailed":
           addLog(
@@ -97,6 +103,8 @@ export function useCopyTradeLogger(updates: CopyTradeUpdate[]) {
             { order_id: u.order_id, session_id: u.session_id, error: u.error },
             "copytrade",
           );
+          queryClient.invalidateQueries({ queryKey: ["copytrade", "orders"] });
+          queryClient.invalidateQueries({ queryKey: ["copytrade", "stats"] });
           break;
         case "SessionPaused":
           addLog("warn", "Session paused", { session_id: u.session_id }, "copytrade");

@@ -12,6 +12,7 @@ import { useCopyTradeWs } from "../../hooks/useCopyTrade";
 import useAlerts from "../../hooks/useAlerts";
 import { useCopyTradeLogger } from "../../hooks/useCopyTradeLogger";
 import { useAlertLogger } from "../../hooks/useAlertLogger";
+import { useOrderToast } from "../../hooks/useOrderToast";
 
 const HEIGHT_MAP = {
   collapsed: 40,
@@ -22,10 +23,11 @@ const HEIGHT_MAP = {
 export function TerminalShell() {
   const { height, activeTab, isOpen } = useTerminalState();
 
-  // Wire event loggers (WS owned here, data passed to logger hooks)
-  const { updates } = useCopyTradeWs();
-  const { alerts } = useAlerts();
+  // Shell owns WS streams; keep them active only while terminal is open.
+  const { updates } = useCopyTradeWs({ enabled: isOpen });
+  const { alerts } = useAlerts({ enabled: isOpen });
   useCopyTradeLogger(updates);
+  useOrderToast(updates);
   useAlertLogger(alerts);
 
   // Set CSS custom property for main content padding

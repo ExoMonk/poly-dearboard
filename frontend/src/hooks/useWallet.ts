@@ -6,6 +6,7 @@ import {
   deriveCredentials,
   deleteWallet,
   fetchWalletBalance,
+  enableTrading,
   approveExchanges,
   fetchDepositAddress,
   fetchDepositStatus,
@@ -68,12 +69,36 @@ export function useWalletBalance(walletId: string | null) {
   });
 }
 
+export function useEnableTrading() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (walletId: string) => enableTrading(walletId),
+    onSuccess: (data, walletId) => {
+      // Optimistic: hide the Enable Trading button immediately
+      if (data.status === "deployed" || data.status === "already_deployed") {
+        qc.setQueryData(BALANCE_KEY(walletId), (old: any) =>
+          old ? { ...old, safe_deployed: true } : old
+        );
+      }
+      qc.invalidateQueries({ queryKey: WALLETS_KEY });
+      // Delayed refetch to confirm on-chain deployment
+      setTimeout(() => qc.invalidateQueries({ queryKey: BALANCE_KEY(walletId) }), 8_000);
+    },
+  });
+}
+
 export function useApproveExchanges() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (walletId: string) => approveExchanges(walletId),
     onSuccess: (_data, walletId) => {
-      qc.invalidateQueries({ queryKey: BALANCE_KEY(walletId) });
+      // Optimistic: set approvals to true immediately (backend confirmed success)
+      qc.setQueryData(BALANCE_KEY(walletId), (old: any) =>
+        old ? { ...old, ctf_exchange_approved: true, neg_risk_exchange_approved: true } : old
+      );
+      // Delayed refetch to sync on-chain state after relayer tx settles
+      // Don't invalidate immediately — it would overwrite the optimistic update
+      setTimeout(() => qc.invalidateQueries({ queryKey: BALANCE_KEY(walletId) }), 10_000);
     },
   });
 }

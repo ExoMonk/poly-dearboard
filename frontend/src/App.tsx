@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import Layout from "./components/Layout";
 import { AuthProvider } from "./context/AuthContext";
 import { TerminalProvider } from "./components/Terminal";
+import { ToastProvider } from "./components/Toast";
 import { pageTransition } from "./lib/motion";
 
 const Dashboard = lazy(() => import("./pages/Dashboard"));
@@ -18,6 +19,7 @@ export default function App() {
 
   return (
     <AuthProvider>
+    <ToastProvider>
     <TerminalProvider>
     <Layout>
       <Suspense fallback={null}>
@@ -42,6 +44,7 @@ export default function App() {
       </Suspense>
     </Layout>
     </TerminalProvider>
+    </ToastProvider>
     </AuthProvider>
   );
 }

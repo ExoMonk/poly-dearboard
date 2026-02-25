@@ -199,6 +199,33 @@ export default function LivePriceChart({
     el.appendChild(tip);
     tooltipRef.current = tip;
 
+    const tsEl = document.createElement("div");
+    tsEl.style.cssText = "color:var(--accent-blue);margin-bottom:6px;font-size:11px;font-family:monospace";
+
+    const gridEl = document.createElement("div");
+    gridEl.style.cssText = "display:grid;grid-template-columns:auto auto;gap:2px 12px";
+
+    const yesLabelEl = document.createElement("span");
+    yesLabelEl.style.cssText = "color:#00ff88";
+    yesLabelEl.textContent = "Yes";
+
+    const yesValueEl = document.createElement("span");
+    yesValueEl.style.cssText = "color:#00ff88;font-family:monospace";
+
+    const noLabelEl = document.createElement("span");
+    noLabelEl.style.cssText = "color:#ff3366";
+    noLabelEl.textContent = "No";
+
+    const noValueEl = document.createElement("span");
+    noValueEl.style.cssText = "color:#ff3366;font-family:monospace";
+
+    const chainTagEl = document.createElement("div");
+    chainTagEl.style.cssText = "color:#3b82f6;font-size:10px;margin-top:4px;display:none";
+    chainTagEl.textContent = "On-chain trade";
+
+    gridEl.append(yesLabelEl, yesValueEl, noLabelEl, noValueEl);
+    tip.append(tsEl, gridEl, chainTagEl);
+
     chart.subscribeCrosshairMove((param) => {
       if (!param.point || param.time === undefined) {
         tip.style.display = "none";
@@ -226,15 +253,10 @@ export default function LivePriceChart({
       });
 
       tip.style.display = "block";
-      tip.innerHTML =
-        `<div style="color:var(--accent-blue);margin-bottom:6px;font-size:11px;font-family:monospace">${ts}</div>` +
-        `<div style="display:grid;grid-template-columns:auto auto;gap:2px 12px">` +
-        `<span style="color:#00ff88">Yes</span><span style="color:#00ff88;font-family:monospace">${yes.toFixed(1)}\u00a2</span>` +
-        `<span style="color:#ff3366">No</span><span style="color:#ff3366;font-family:monospace">${no.toFixed(1)}\u00a2</span>` +
-        `</div>` +
-        (cVal != null
-          ? `<div style="color:#3b82f6;font-size:10px;margin-top:4px">On-chain trade</div>`
-          : "");
+      tsEl.textContent = ts;
+      yesValueEl.textContent = `${yes.toFixed(1)}\u00a2`;
+      noValueEl.textContent = `${no.toFixed(1)}\u00a2`;
+      chainTagEl.style.display = cVal != null ? "block" : "none";
 
       const left =
         param.point.x > el.clientWidth * 0.6

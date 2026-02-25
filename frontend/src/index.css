@@ -190,6 +190,44 @@
   50% { box-shadow: 0 0 12px rgba(59, 130, 246, 0.4), 0 0 24px rgba(249, 115, 22, 0.1); }
 }
 
+/* Order highlight animations */
+@keyframes highlightGreen {
+  0% { background-color: rgba(34, 197, 94, 0.25); }
+  100% { background-color: transparent; }
+}
+@keyframes highlightBlue {
+  0% { background-color: rgba(59, 130, 246, 0.25); }
+  100% { background-color: transparent; }
+}
+@keyframes highlightRed {
+  0% { background-color: rgba(239, 68, 68, 0.25); }
+  100% { background-color: transparent; }
+}
+@keyframes highlightYellow {
+  0% { background-color: rgba(234, 179, 8, 0.28); }
+  100% { background-color: transparent; }
+}
+@keyframes highlightOrange {
+  0% { background-color: rgba(249, 115, 22, 0.28); }
+  100% { background-color: transparent; }
+}
+
+.animate-highlight-green {
+  animation: highlightGreen 3s ease-out forwards;
+}
+.animate-highlight-blue {
+  animation: highlightBlue 3s ease-out forwards;
+}
+.animate-highlight-red {
+  animation: highlightRed 3s ease-out forwards;
+}
+.animate-highlight-yellow {
+  animation: highlightYellow 3s ease-out forwards;
+}
+.animate-highlight-orange {
+  animation: highlightOrange 3s ease-out forwards;
+}
+
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

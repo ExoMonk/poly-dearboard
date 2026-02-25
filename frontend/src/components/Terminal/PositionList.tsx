@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useSessionPositions, useClosePosition } from "../../hooks/useCopyTrade";
+import { useSessionPositions, useClosePosition, useRedeemPosition } from "../../hooks/useCopyTrade";
 import type { CopyTradePosition } from "../../types";
 
 function PositionRow({ position, sessionId, canClose }: {
@@ -9,7 +9,9 @@ function PositionRow({ position, sessionId, canClose }: {
   canClose: boolean;
 }) {
   const close = useClosePosition();
+  const redeem = useRedeemPosition();
   const [confirming, setConfirming] = useState(false);
+  const [redeemConfirming, setRedeemConfirming] = useState(false);
 
   const handleClose = () => {
     if (!confirming) {
@@ -22,6 +24,17 @@ function PositionRow({ position, sessionId, canClose }: {
     );
   };
 
+  const handleRedeem = () => {
+    if (!redeemConfirming) {
+      setRedeemConfirming(true);
+      return;
+    }
+    redeem.mutate(
+      { sessionId, assetId: position.asset_id },
+      { onSettled: () => setRedeemConfirming(false) }
+    );
+  };
+
   const pnl = position.unrealized_pnl + position.realized_pnl;
   const isClosed = position.net_shares < 0.01;
 
@@ -29,6 +42,7 @@ function PositionRow({ position, sessionId, canClose }: {
     <div className={`flex items-center gap-2 px-2 py-1.5 text-xs border-b border-[var(--border-subtle)] last:border-b-0 hover:bg-[var(--surface-2)]/50 ${isClosed ? "opacity-50" : ""}`}>
       <Link to={`/market/${position.asset_id}`} className="flex-1 min-w-0 hover:opacity-80">
         <div className="font-medium text-blue-400 hover:underline truncate" title={position.question}>
+          {position.resolved && <span className="text-[10px] text-yellow-500 mr-1">[RESOLVED]</span>}
           {position.question || position.asset_id.slice(0, 16) + "..."}
         </div>
         <div className="text-[10px] text-[var(--text-muted)]">
@@ -50,19 +64,34 @@ function PositionRow({ position, sessionId, canClose }: {
       <div className={`text-right w-20 font-mono ${pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
         {pnl >= 0 ? "+" : ""}{pnl.toFixed(2)}
       </div>
-      {canClose && position.net_shares > 0 && (
-        <button
-          className={`px-2 py-0.5 text-[10px] rounded border ${
-            confirming
-              ? "bg-red-500/20 text-red-400 border-red-500/30"
-              : "bg-neutral-500/20 text-neutral-400 border-neutral-500/30 hover:text-neutral-300"
-          }`}
-          onClick={handleClose}
-          onBlur={() => setConfirming(false)}
-          disabled={close.isPending}
-        >
-          {close.isPending ? "..." : confirming ? "Confirm?" : "Close"}
-        </button>
+      {canClose && !isClosed && (
+        position.resolved ? (
+          <button
+            className={`px-2 py-0.5 text-[10px] rounded border ${
+              redeemConfirming
+                ? "bg-yellow-500/20 text-yellow-400 border-yellow-500/30"
+                : "bg-yellow-500/10 text-yellow-500 border-yellow-500/20 hover:text-yellow-300"
+            }`}
+            onClick={handleRedeem}
+            onBlur={() => setRedeemConfirming(false)}
+            disabled={redeem.isPending}
+          >
+            {redeem.isPending ? "..." : redeemConfirming ? "Confirm?" : "Redeem"}
+          </button>
+        ) : (
+          <button
+            className={`px-2 py-0.5 text-[10px] rounded border ${
+              confirming
+                ? "bg-red-500/20 text-red-400 border-red-500/30"
+                : "bg-neutral-500/20 text-neutral-400 border-neutral-500/30 hover:text-neutral-300"
+            }`}
+            onClick={handleClose}
+            onBlur={() => setConfirming(false)}
+            disabled={close.isPending}
+          >
+            {close.isPending ? "..." : confirming ? "Confirm?" : "Close"}
+          </button>
+        )
       )}
     </div>
   );

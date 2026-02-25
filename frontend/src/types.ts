@@ -120,6 +120,7 @@ export interface ResolvedMarket {
   gamma_token_id: string;
   all_token_ids: string[];
   outcomes: string[];
+  condition_id?: string;
 }
 
 // Smart Money Signal
@@ -439,12 +440,12 @@ export interface WalletBalance {
   neg_risk_exchange_approved: boolean;
   pol_balance: string;
   needs_gas: boolean;
+  safe_deployed: boolean;
   last_checked_secs_ago: number | null;
 }
 
 export interface ApprovalResult {
-  ctf_tx_hash: string | null;
-  neg_risk_tx_hash: string | null;
+  tx_hash: string | null;
   already_approved: boolean;
 }
 
@@ -489,6 +490,7 @@ export type CopyOrderType = "FOK" | "GTC";
 export type OrderStatus = "pending" | "submitted" | "filled" | "partial" | "failed" | "canceled" | "simulated";
 
 export interface CreateSessionRequest {
+  wallet_id?: string;
   list_id?: string;
   top_n?: number;
   copy_pct: number;
@@ -498,10 +500,18 @@ export interface CreateSessionRequest {
   initial_capital: number;
   simulate: boolean;
   max_loss_pct?: number;
+  min_source_usdc?: number;
+  utilization_cap?: number;
+  max_open_positions?: number;
+  take_profit_pct?: number;
+  stop_loss_pct?: number;
+  mirror_close?: boolean;
+  health_interval_secs?: number;
 }
 
 export interface CopyTradeSession {
   id: string;
+  wallet_id: string | null;
   list_id: string | null;
   top_n: number | null;
   copy_pct: number;
@@ -513,6 +523,13 @@ export interface CopyTradeSession {
   positions_value: number;
   simulate: boolean;
   max_loss_pct: number | null;
+  min_source_usdc: number;
+  utilization_cap: number;
+  max_open_positions: number;
+  take_profit_pct: number | null;
+  stop_loss_pct: number | null;
+  mirror_close: boolean;
+  health_interval_secs: number;
   status: SessionStatus;
   created_at: string;
   updated_at: string;
@@ -586,6 +603,7 @@ export interface CopyTradePosition {
   question: string;
   outcome: string;
   category: string;
+  resolved: boolean;
   buy_shares: number;
   sell_shares: number;
   net_shares: number;
@@ -606,4 +624,29 @@ export interface CopyTradeSummary {
   total_pnl: number;
   total_return_pct: number;
   total_orders: number;
+}
+
+// PayoutRedemption Insights (spec 19)
+
+export interface TraderRedemption {
+  condition_id: string;
+  question: string;
+  outcome: string;
+  payout_usdc: number;
+  tx_hash: string;
+  block_number: number;
+  redeemed_at: string;
+}
+
+export interface MarketRedemption {
+  redeemer: string;
+  payout_usdc: number;
+  tx_hash: string;
+  block_number: number;
+  redeemed_at: string;
+}
+
+export interface RedemptionsResponse<T> {
+  redemptions: T[];
+  total: number;
 }

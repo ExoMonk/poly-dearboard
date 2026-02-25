@@ -19,12 +19,14 @@ export function StartCopyTradeModal({ isOpen, onClose }: Props) {
   const [source, setSource] = useState<"top_n" | "list">("top_n");
   const [topN, setTopN] = useState(10);
   const [listId, setListId] = useState("");
-  const [capital, setCapital] = useState(1000);
+  const [capital, setCapital] = useState(5);
   const [copyPct, setCopyPct] = useState(50);
   const [maxPosition, setMaxPosition] = useState(100);
   const [maxSlippage, setMaxSlippage] = useState(200);
   const [orderType, setOrderType] = useState<CopyOrderType>("FOK");
   const [maxLossPct, setMaxLossPct] = useState(20);
+  const [simulate, setSimulate] = useState(true);
+  const [showLiveConfirm, setShowLiveConfirm] = useState(false);
   const [error, setError] = useState("");
 
   // Load backtest config from sessionStorage if available
@@ -46,13 +48,17 @@ export function StartCopyTradeModal({ isOpen, onClose }: Props) {
 
   const handleSubmit = () => {
     setError("");
+    if (!simulate && (capital < 1 || capital > 10)) {
+      setError("Live mode capital must be between $1 and $10 USDC during beta.");
+      return;
+    }
     const body: CreateSessionRequest = {
       copy_pct: copyPct / 100,
       max_position_usdc: maxPosition,
       max_slippage_bps: maxSlippage,
       order_type: orderType,
       initial_capital: capital,
-      simulate: true,
+      simulate,
       max_loss_pct: maxLossPct,
       ...(source === "top_n" ? { top_n: topN } : { list_id: listId }),
     };
@@ -88,7 +94,7 @@ export function StartCopyTradeModal({ isOpen, onClose }: Props) {
             transition={{ type: "spring", stiffness: 300, damping: 30 }}
           >
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold text-[var(--text-primary)]">Start Copy-Trade Simulation</h3>
+              <h3 className="text-sm font-semibold text-[var(--text-primary)]">{simulate ? "Start Copy-Trade Simulation" : "Start Live Copy-Trade"}</h3>
               <button onClick={onClose} className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)]">Cancel</button>
             </div>
 
@@ -131,8 +137,8 @@ export function StartCopyTradeModal({ isOpen, onClose }: Props) {
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <div className={labelCls}>Capital (USDC)</div>
-                  <input type="number" className={inputCls} value={capital} min={10} onChange={(e) => setCapital(Number(e.target.value))} />
+                  <div className={labelCls}>Capital (USDC){!simulate && " (max $10 beta)"}</div>
+                  <input type="number" className={inputCls} value={capital} min={1} max={simulate ? undefined : 10} onChange={(e) => setCapital(Number(e.target.value))} />
                 </div>
                 <div>
                   <div className={labelCls}>Copy %</div>
@@ -165,14 +171,56 @@ export function StartCopyTradeModal({ isOpen, onClose }: Props) {
                 </div>
               </div>
 
+              {/* Mode: Simulate / Live */}
+              <div>
+                <div className={labelCls}>Mode</div>
+                <div className="flex gap-1.5">
+                  <button
+                    className={`px-2 py-1 text-xs rounded border ${simulate ? "bg-[var(--neon-green)]/10 text-[var(--neon-green)] border-[var(--neon-green)]/30" : "bg-[var(--surface-2)] text-[var(--text-muted)] border-[var(--border-subtle)]"}`}
+                    onClick={() => { setSimulate(true); setShowLiveConfirm(false); }}
+                  >
+                    Simulate
+                  </button>
+                  <button
+                    className={`px-2 py-1 text-xs rounded border ${!simulate ? "bg-red-500/10 text-red-400 border-red-500/30" : "bg-[var(--surface-2)] text-[var(--text-muted)] border-[var(--border-subtle)]"}`}
+                    onClick={() => { if (simulate) setShowLiveConfirm(true); }}
+                  >
+                    Live
+                  </button>
+                </div>
+              </div>
+
+              {/* Live mode confirmation */}
+              {showLiveConfirm && simulate && (
+                <div className="border border-red-500/30 rounded p-3 bg-red-500/5">
+                  <p className="text-[10px] text-red-300 mb-2">
+                    Live mode places real orders on Polymarket CLOB using your wallet funds. This is irreversible. Ensure your wallet is funded and CLOB credentials are derived.
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      className="px-2 py-1 text-[10px] rounded border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20"
+                      onClick={() => { setSimulate(false); setShowLiveConfirm(false); if (capital > 10) setCapital(10); }}
+                    >
+                      Confirm Live Mode
+                    </button>
+                    <button
+                      className="px-2 py-1 text-[10px] rounded border border-[var(--border-subtle)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                      onClick={() => setShowLiveConfirm(false)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {error && <div className="text-xs text-red-400">{error}</div>}
 
               <button
-                className="w-full py-2 text-xs font-semibold rounded bg-[var(--neon-green)]/10 text-[var(--neon-green)] border border-[var(--neon-green)]/30 hover:bg-[var(--neon-green)]/20 transition-colors disabled:opacity-50"
+                className={`w-full py-2 text-xs font-semibold rounded border transition-colors disabled:opacity-50 ${simulate ? "bg-[var(--neon-green)]/10 text-[var(--neon-green)] border-[var(--neon-green)]/30 hover:bg-[var(--neon-green)]/20" : "bg-red-500/10 text-red-400 border-red-500/30 hover:bg-red-500/20"}`}
                 onClick={handleSubmit}
                 disabled={create.isPending || (source === "list" && !listId)}
               >
-                {create.isPending ? "Starting..." : "Start Simulation"}
+                {create.isPending ? "Starting..." : simulate ? "Start Simulation" : "Start Live Trading"}
               </button>
             </div>
           </motion.div>

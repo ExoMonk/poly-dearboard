@@ -319,6 +319,15 @@ export async function fetchWalletBalance(walletId: string): Promise<WalletBalanc
   return res.json();
 }
 
+export async function enableTrading(walletId: string): Promise<{ status: string; safe_address: string; transaction_id?: string }> {
+  const res = await authFetch(`${BASE}/wallets/${walletId}/enable-trading`, { method: "POST" });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(body || `Enable trading failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function approveExchanges(walletId: string): Promise<ApprovalResult> {
   const res = await authFetch(`${BASE}/wallets/${walletId}/approve`, { method: "POST" });
   if (!res.ok) {
@@ -411,6 +420,19 @@ export async function closePosition(sessionId: string, assetId: string): Promise
   return res.json();
 }
 
+export async function redeemPosition(sessionId: string, assetId: string): Promise<{ status: string; tx_id: string | null; condition_id: string }> {
+  const res = await authFetch(`${BASE}/copytrade/redeem-position`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId, asset_id: assetId }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Redeem position failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function getSessionStats(sessionId: string): Promise<import("./types").SessionStats> {
   const res = await authFetch(`${BASE}/copytrade/sessions/${sessionId}/stats`);
   if (!res.ok) throw new Error(`Get session stats failed: ${res.status}`);
@@ -432,5 +454,31 @@ export async function getCopyTradeSummary(): Promise<import("./types").CopyTrade
 export async function getActiveTraders(): Promise<string[]> {
   const res = await authFetch(`${BASE}/copytrade/active-traders`);
   if (!res.ok) throw new Error(`Get active traders failed: ${res.status}`);
+  return res.json();
+}
+
+// PayoutRedemption Insights (spec 19)
+
+export async function fetchTraderRedemptions(
+  address: string,
+  params?: { limit?: number; offset?: number },
+): Promise<import("./types").RedemptionsResponse<import("./types").TraderRedemption>> {
+  const sp = new URLSearchParams();
+  if (params?.limit) sp.set("limit", String(params.limit));
+  if (params?.offset !== undefined) sp.set("offset", String(params.offset));
+  const res = await authFetch(`${BASE}/trader/${address}/redemptions?${sp}`);
+  if (!res.ok) throw new Error(`Trader redemptions fetch failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchMarketRedemptions(
+  conditionId: string,
+  params?: { limit?: number; offset?: number },
+): Promise<import("./types").RedemptionsResponse<import("./types").MarketRedemption>> {
+  const sp = new URLSearchParams();
+  if (params?.limit) sp.set("limit", String(params.limit));
+  if (params?.offset !== undefined) sp.set("offset", String(params.offset));
+  const res = await authFetch(`${BASE}/market/${conditionId}/redemptions?${sp}`);
+  if (!res.ok) throw new Error(`Market redemptions fetch failed: ${res.status}`);
   return res.json();
 }

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { motion } from "motion/react";
-import { fetchTrader, fetchTraderTrades, fetchTraderPositions, fetchPnlChart, fetchTraderProfile } from "../api";
+import { fetchTrader, fetchTraderTrades, fetchTraderPositions, fetchPnlChart, fetchTraderProfile, fetchTraderRedemptions } from "../api";
 import type { OpenPosition, PnlTimeframe } from "../types";
 import Spinner from "../components/Spinner";
 import Pagination from "../components/Pagination";
@@ -51,6 +51,12 @@ export default function TraderDetail() {
   const { data: profile } = useQuery({
     queryKey: ["trader-profile", address],
     queryFn: () => fetchTraderProfile(address!),
+    enabled: !!address,
+  });
+
+  const { data: redemptionsData } = useQuery({
+    queryKey: ["trader-redemptions", address],
+    queryFn: () => fetchTraderRedemptions(address!),
     enabled: !!address,
   });
 
@@ -236,6 +242,73 @@ export default function TraderDetail() {
             </div>
           </div>
           <PositionsTable positions={posTab === "open" ? positionsData.open : positionsData.closed} />
+        </div>
+      )}
+
+      {/* Redemptions */}
+      {redemptionsData && redemptionsData.redemptions.length > 0 && (
+        <div>
+          <div className="flex items-center gap-3 mb-4">
+            <h2 className="text-lg font-bold gradient-text">Redemptions</h2>
+            <span className="text-xs text-[var(--text-secondary)]">
+              {formatUsd(String(redemptionsData.redemptions.reduce((sum, r) => sum + r.payout_usdc, 0)))} total
+            </span>
+          </div>
+          <div className="glass overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-[var(--border-glow)] text-[var(--text-secondary)] text-xs uppercase tracking-widest">
+                    <th className="px-4 py-3 text-left">Market</th>
+                    <th className="px-4 py-3 text-center">Outcome</th>
+                    <th className="px-4 py-3 text-right">Payout</th>
+                    <th className="px-4 py-3 text-right">Date</th>
+                    <th className="px-4 py-3 text-right">Tx</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {redemptionsData.redemptions.map((r, i) => (
+                    <motion.tr
+                      key={`${r.tx_hash}-${i}`}
+                      initial={{ opacity: 0, x: -8 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ duration: 0.25, delay: i * 0.02 }}
+                      className="border-b border-[var(--border-subtle)] row-glow"
+                    >
+                      <td className="px-4 py-3 max-w-xs truncate" title={r.question || r.condition_id}>
+                        <span className="text-[var(--text-primary)]">
+                          {r.question || shortenAddress(r.condition_id)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {r.outcome && (
+                          <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-[var(--neon-green)]/10 text-[var(--neon-green)]">
+                            {r.outcome}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono glow-green">
+                        {formatUsd(String(r.payout_usdc))}
+                      </td>
+                      <td className="px-4 py-3 text-right text-[var(--text-secondary)] text-xs">
+                        {r.redeemed_at ? formatTimestamp(r.redeemed_at) : "—"}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <a
+                          href={polygonscanTx(r.tx_hash)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[var(--accent-blue)]/50 hover:text-[var(--accent-blue)] font-mono text-xs transition-colors duration-200"
+                        >
+                          {shortenAddress(r.tx_hash)}
+                        </a>
+                      </td>
+                    </motion.tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
 

@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { useSessions, useSessionOrders } from "../../hooks/useCopyTrade";
 import type { CopyTradeOrder, OrderStatus } from "../../types";
@@ -37,19 +37,72 @@ function SortHeader({ label, field, sort, onSort }: {
   );
 }
 
-function OrderRow({ order, expanded, onToggle }: {
+const NEW_HIGHLIGHT: Record<string, string> = {
+  filled: "animate-highlight-green",
+  simulated: "animate-highlight-blue",
+  pending: "animate-highlight-yellow",
+  submitted: "animate-highlight-yellow",
+  partial: "animate-highlight-orange",
+  failed: "animate-highlight-red",
+  default: "animate-highlight-green",
+};
+
+type IncomingLevel = "success" | "warn" | "error";
+
+function incomingBannerStyle(level: IncomingLevel): string {
+  switch (level) {
+    case "error":
+      return "bg-red-500/15 border-red-500/30 text-red-300";
+    case "warn":
+      return "bg-yellow-500/15 border-yellow-500/30 text-yellow-200";
+    default:
+      return "bg-green-500/15 border-green-500/30 text-green-300";
+  }
+}
+
+function summarizeIncoming(orders: CopyTradeOrder[]): { message: string; level: IncomingLevel } {
+  const failed = orders.filter((o) => o.status === "failed").length;
+  const pendingLike = orders.filter((o) => o.status === "pending" || o.status === "submitted" || o.status === "partial").length;
+  const filledLike = orders.filter((o) => o.status === "filled" || o.status === "simulated").length;
+
+  if (failed > 0) {
+    return {
+      level: "error",
+      message: `⚠ ${orders.length} new trade update${orders.length > 1 ? "s" : ""} — ${failed} failed`,
+    };
+  }
+
+  if (pendingLike > 0) {
+    return {
+      level: "warn",
+      message: `⚠ Incoming trade${pendingLike > 1 ? "s" : ""} — ${pendingLike} pending/submitted`,
+    };
+  }
+
+  return {
+    level: "success",
+    message: `✓ ${filledLike} new filled/simulated trade${filledLike > 1 ? "s" : ""}`,
+  };
+}
+
+function OrderRow({ order, expanded, onToggle, isNew }: {
   order: CopyTradeOrder;
   expanded: boolean;
   onToggle: () => void;
+  isNew?: boolean;
 }) {
   const time = new Date(order.created_at).toLocaleString(undefined, {
     month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit",
   });
 
+  const highlightClass = isNew
+    ? (NEW_HIGHLIGHT[order.status] ?? NEW_HIGHLIGHT.default)
+    : "";
+
   return (
     <>
       <tr
-        className="border-b border-[var(--border-subtle)] hover:bg-[var(--surface-2)]/50 cursor-pointer text-xs"
+        className={`border-b border-[var(--border-subtle)] hover:bg-[var(--surface-2)]/50 cursor-pointer text-xs ${highlightClass}`}
         onClick={onToggle}
       >
         <td className="px-2 py-1.5 font-mono text-[var(--text-muted)]">{time}</td>
@@ -141,11 +194,37 @@ export function OrdersTab() {
   const [sort, setSort] = useState<{ field: SortField; dir: SortDir }>({ field: "created_at", dir: "desc" });
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [page, setPage] = useState(0);
+  const [incomingNotice, setIncomingNotice] = useState<{ message: string; level: IncomingLevel } | null>(null);
 
   // Auto-select first session
   const sessionId = selectedSession ?? sessions?.[0]?.id ?? null;
 
   const { data: orders, isLoading } = useSessionOrders(sessionId, (page + 1) * PAGE_SIZE);
+
+  // Track new orders for highlight animation
+  const prevOrderIdsRef = useRef<Set<string>>(new Set());
+  const [newOrderIds, setNewOrderIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!orders) return;
+    const currentIds = new Set(orders.map((o) => o.id));
+    const prev = prevOrderIdsRef.current;
+    if (prev.size > 0) {
+      const freshIds = new Set<string>();
+      for (const id of currentIds) {
+        if (!prev.has(id)) freshIds.add(id);
+      }
+      if (freshIds.size > 0) {
+        const freshOrders = orders.filter((o) => freshIds.has(o.id));
+        setIncomingNotice(summarizeIncoming(freshOrders));
+        setNewOrderIds(freshIds);
+        // Clear highlights/notice after animation window (3s)
+        setTimeout(() => setNewOrderIds(new Set()), 3000);
+        setTimeout(() => setIncomingNotice(null), 3000);
+      }
+    }
+    prevOrderIdsRef.current = currentIds;
+  }, [orders]);
 
   const filtered = useMemo(() => {
     if (!orders) return [];
@@ -220,6 +299,12 @@ export function OrdersTab() {
         </div>
       </div>
 
+      {incomingNotice && (
+        <div className={`mx-3 mt-2 px-2.5 py-1.5 rounded border text-xs font-mono ${incomingBannerStyle(incomingNotice.level)}`}>
+          {incomingNotice.message}
+        </div>
+      )}
+
       {/* Table */}
       <div className="flex-1 overflow-auto min-h-0">
         {isLoading ? (
@@ -245,6 +330,7 @@ export function OrdersTab() {
                   order={order}
                   expanded={expandedId === order.id}
                   onToggle={() => setExpandedId(expandedId === order.id ? null : order.id)}
+                  isNew={newOrderIds.has(order.id)}
                 />
               ))}
             </tbody>
