@@ -101,7 +101,7 @@ function LogEntryRow({ entry }: { entry: LogEntry }) {
 }
 
 export function TerminalLogs() {
-  const { logs } = useTerminalState();
+  const { logs, logsJumpNonce } = useTerminalState();
   const { clearLogs } = useTerminalDispatch();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scrollLock, setScrollLock] = useState(false);
@@ -129,6 +129,15 @@ export function TerminalLogs() {
     if (!atBottom && !scrollLock) setScrollLock(true);
     if (atBottom && scrollLock) setScrollLock(false);
   }, [scrollLock]);
+
+  useEffect(() => {
+    if (logsJumpNonce === 0) return;
+    setScrollLock(false);
+    requestAnimationFrame(() => {
+      if (!scrollRef.current) return;
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    });
+  }, [logsJumpNonce]);
 
   return (
     <div className="flex flex-col h-full">

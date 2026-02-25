@@ -5,6 +5,8 @@ import Layout from "./components/Layout";
 import AuthGate from "./components/AuthGate";
 import { AuthProvider } from "./context/AuthContext";
 import { TerminalProvider } from "./components/Terminal";
+import { CommandPalette } from "./components/Terminal/CommandPalette";
+import { CreateSessionModal } from "./components/Terminal/CreateSessionModal";
 import { ToastProvider } from "./components/Toast";
 import { pageTransition } from "./lib/motion";
 
@@ -45,6 +47,8 @@ export default function App() {
       </AnimatePresence>
       </Suspense>
     </Layout>
+    <CommandPalette />
+    <CreateSessionModal />
     </TerminalProvider>
     </ToastProvider>
     </AuthProvider>

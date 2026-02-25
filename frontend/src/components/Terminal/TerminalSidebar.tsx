@@ -4,13 +4,18 @@ import type { TerminalTab } from "../../types";
 interface TabDef {
   id: TerminalTab;
   label: string;
+  shortcutKey?: string;
   icon: React.ReactNode;
 }
+
+const isMac = /Mac|iPhone|iPad/.test(navigator.userAgent);
+const altPrefix = isMac ? "⌥" : "Alt+";
 
 const TABS: TabDef[] = [
   {
     id: "wallet",
     label: "Wallet",
+    shortcutKey: "1",
     icon: (
       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <rect x="2" y="6" width="20" height="14" rx="2" />
@@ -23,6 +28,7 @@ const TABS: TabDef[] = [
   {
     id: "sessions",
     label: "Sessions",
+    shortcutKey: "2",
     icon: (
       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M3 3v18h18" />
@@ -33,6 +39,7 @@ const TABS: TabDef[] = [
   {
     id: "logs",
     label: "Logs",
+    shortcutKey: "3",
     icon: (
       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -45,6 +52,7 @@ const TABS: TabDef[] = [
   {
     id: "orders",
     label: "Orders",
+    shortcutKey: "4",
     icon: (
       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
@@ -75,6 +83,11 @@ export function TerminalSidebar() {
           >
             {tab.icon}
             <span>{tab.label}</span>
+            {tab.shortcutKey && (
+              <span className="ml-auto text-[10px] text-[var(--text-secondary)]/80 font-mono">
+                {`${altPrefix}${tab.shortcutKey}`}
+              </span>
+            )}
           </button>
         );
       })}

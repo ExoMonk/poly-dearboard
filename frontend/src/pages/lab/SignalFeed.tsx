@@ -2,7 +2,7 @@ import { motion, AnimatePresence } from "motion/react";
 import useSignalFeed from "../../hooks/useSignalFeed";
 import { useSessions } from "../../hooks/useCopyTrade";
 import { useTerminal } from "../../components/Terminal/TerminalProvider";
-import { StartCopyTradeModal } from "../../components/Terminal/StartCopyTradeModal";
+import { requestOpenCreateSession } from "../../components/Terminal/CreateSessionModal";
 import ListSelector from "./ListSelector";
 import { useState } from "react";
 import { Link } from "react-router-dom";
@@ -14,7 +14,6 @@ const DEFAULT_TOP_N = 20;
 
 export default function SignalFeed() {
   const [listId, setListId] = useState<string | null>(null);
-  const [showModal, setShowModal] = useState(false);
   const { data: sessions } = useSessions();
   const { setActiveTab, setHeight } = useTerminal();
   const hasActiveSession = sessions?.some((s) => s.status !== "stopped");
@@ -38,7 +37,7 @@ export default function SignalFeed() {
             {!hasActiveSession && (
               <button
                 className="text-xs font-semibold px-3 py-1.5 rounded bg-[var(--neon-green)]/10 text-[var(--neon-green)] border border-[var(--neon-green)]/30 hover:bg-[var(--neon-green)]/20 transition-colors"
-                onClick={() => setShowModal(true)}
+                onClick={requestOpenCreateSession}
               >
                 Start Copy-Trade
               </button>
@@ -196,7 +195,6 @@ export default function SignalFeed() {
             )}
           </div>
         </div>
-      <StartCopyTradeModal isOpen={showModal} onClose={() => setShowModal(false)} />
     </div>
   );
 }

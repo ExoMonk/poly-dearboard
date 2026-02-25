@@ -1,10 +1,11 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { motion } from "motion/react";
-import { useTerminalState } from "./TerminalProvider";
+import { useTerminalDispatch, useTerminalState } from "./TerminalProvider";
 import { TerminalHeader } from "./TerminalHeader";
 import { TerminalSidebar } from "./TerminalSidebar";
 import { TerminalLogs } from "./TerminalLogs";
 import { TerminalStatusBar } from "./TerminalStatusBar";
+import { TerminalCommandPrompt } from "./TerminalCommandPrompt";
 import { WalletTab } from "./WalletTab";
 import { SessionsTab } from "./SessionsTab";
 import { OrdersTab } from "./OrdersTab";
@@ -21,14 +22,73 @@ const HEIGHT_MAP = {
 } as const;
 
 export function TerminalShell() {
-  const { height, activeTab, isOpen } = useTerminalState();
+  const { height, activeTab, isOpen, unread } = useTerminalState();
+  const { incrUnread, clearUnread, clearAllUnread } = useTerminalDispatch();
 
-  // Shell owns WS streams; keep them active only while terminal is open.
-  const { updates } = useCopyTradeWs({ enabled: isOpen });
-  const { alerts } = useAlerts({ enabled: isOpen });
+  const seenCopytradeKeysRef = useRef<Set<string>>(new Set());
+  const seenAlertKeysRef = useRef<Set<string>>(new Set());
+
+  // Keep streams active so collapsed mode can still track unread events.
+  const { updates, connected: wsConnected } = useCopyTradeWs({ enabled: true });
+  const { alerts, connected: alertsConnected } = useAlerts({ enabled: true });
   useCopyTradeLogger(updates);
   useOrderToast(updates);
   useAlertLogger(alerts);
+
+  useEffect(() => {
+    for (const update of updates) {
+      const key = (() => {
+        switch (update.kind) {
+          case "OrderPlaced":
+            return `placed:${update.order.id}`;
+          case "OrderFilled":
+            return `filled:${update.order_id}`;
+          case "OrderFailed":
+            return `failed:${update.order_id}`;
+          case "SessionPaused":
+            return `paused:${update.session_id}`;
+          case "SessionResumed":
+            return `resumed:${update.session_id}`;
+          case "SessionStopped":
+            return `stopped:${update.session_id}:${update.reason ?? "none"}`;
+          case "BalanceUpdate":
+            return `balance:${update.balance}`;
+        }
+      })();
+
+      if (seenCopytradeKeysRef.current.has(key)) continue;
+      seenCopytradeKeysRef.current.add(key);
+      if (height === "collapsed") {
+        incrUnread("copytrade", 1);
+      }
+    }
+  }, [updates, height, incrUnread]);
+
+  useEffect(() => {
+    for (const alert of alerts) {
+      const key = `${alert.tx_hash}:${alert.kind}`;
+      if (seenAlertKeysRef.current.has(key)) continue;
+      seenAlertKeysRef.current.add(key);
+      if (height === "collapsed") {
+        incrUnread("alert", 1);
+      }
+    }
+  }, [alerts, height, incrUnread]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    if (activeTab === "logs") {
+      if (unread.copytrade > 0 || unread.alert > 0) {
+        clearAllUnread();
+      }
+      return;
+    }
+
+    if ((activeTab === "sessions" || activeTab === "orders") && unread.copytrade > 0) {
+      clearUnread("copytrade");
+    }
+  }, [activeTab, isOpen, unread.copytrade, unread.alert, clearAllUnread, clearUnread]);
 
   // Set CSS custom property for main content padding
   useEffect(() => {
@@ -67,7 +127,8 @@ export function TerminalShell() {
             <TerminalSidebar />
             <div className="flex-1 min-h-0 overflow-hidden">{tabContent}</div>
           </div>
-          <TerminalStatusBar />
+          <TerminalCommandPrompt />
+          <TerminalStatusBar wsConnected={wsConnected} alertsConnected={alertsConnected} />
         </>
       )}
     </motion.div>

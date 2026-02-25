@@ -1,10 +1,9 @@
 import { useState } from "react";
-import { useSessions, useUpdateSession, useDeleteSession, useCreateSession, useSessionStats } from "../../hooks/useCopyTrade";
-import { useTraderLists } from "../../hooks/useTraderLists";
-import { useWallets } from "../../hooks/useWallet";
+import { useSessions, useUpdateSession, useDeleteSession, useSessionStats } from "../../hooks/useCopyTrade";
 import { useTerminalDispatch } from "./TerminalProvider";
 import { PositionList } from "./PositionList";
-import type { CopyTradeSession, SessionStatus, CopyOrderType, CreateSessionRequest } from "../../types";
+import { requestOpenCreateSession } from "./CreateSessionModal";
+import type { CopyTradeSession, SessionStatus } from "../../types";
 
 const STATUS_BADGE: Record<SessionStatus, string> = {
   running: "bg-green-500/20 text-green-400 border-green-500/30",
@@ -111,6 +110,11 @@ function SessionCard({ session }: { session: CopyTradeSession }) {
               Mirror
             </span>
           )}
+          {(session.max_source_price < 0.95 || session.min_source_price > 0.05) && (
+            <span className="px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
+              {(session.min_source_price * 100).toFixed(0)}¢–{(session.max_source_price * 100).toFixed(0)}¢
+            </span>
+          )}
           {stats && session.utilization_cap < 1.0 && stats.capital_utilization >= session.utilization_cap && (
             <span className="px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-400 border border-orange-500/20">
               Buy-gated
@@ -212,301 +216,26 @@ function SessionCard({ session }: { session: CopyTradeSession }) {
   );
 }
 
-function CreateSessionForm({ onClose }: { onClose: () => void }) {
-  const create = useCreateSession();
-  const { data: lists } = useTraderLists();
-  const { data: wallets } = useWallets();
-
-  const [source, setSource] = useState<"top_n" | "list">("top_n");
-  const [topN, setTopN] = useState(10);
-  const [listId, setListId] = useState("");
-  const [capital, setCapital] = useState(1000);
-  const [copyPct, setCopyPct] = useState(50);
-  const [maxPosition, setMaxPosition] = useState(100);
-  const [maxSlippage, setMaxSlippage] = useState(200);
-  const [orderType, setOrderType] = useState<CopyOrderType>("FOK");
-  const [maxLossPct, setMaxLossPct] = useState(20);
-  const [simulate, setSimulate] = useState(true);
-  const [showLiveConfirm, setShowLiveConfirm] = useState(false);
-  const [walletId, setWalletId] = useState("");
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [minSourceUsdc, setMinSourceUsdc] = useState(50);
-  const [utilizationCap, setUtilizationCap] = useState(100);
-  const [maxOpenPositions, setMaxOpenPositions] = useState(10);
-  const [takeProfitPct, setTakeProfitPct] = useState<number | "">("");
-  const [stopLossPct, setStopLossPct] = useState<number | "">("");
-  const [mirrorClose, setMirrorClose] = useState(true);
-  const [healthInterval, setHealthInterval] = useState(30);
-  const [error, setError] = useState("");
-  const liveWallets = (wallets ?? []).filter((w) => w.has_clob_credentials);
-
-  const handleSubmit = () => {
-    setError("");
-    if (!simulate && capital > 10) {
-      setError("Live mode capital is capped at $10 USDC during beta.");
-      return;
-    }
-    if (!simulate && !walletId) {
-      setError("Select a wallet for live trading.");
-      return;
-    }
-    const body: CreateSessionRequest = {
-      ...(!simulate ? { wallet_id: walletId } : {}),
-      copy_pct: copyPct / 100,
-      max_position_usdc: maxPosition,
-      max_slippage_bps: maxSlippage,
-      order_type: orderType,
-      initial_capital: capital,
-      simulate,
-      max_loss_pct: maxLossPct,
-      min_source_usdc: minSourceUsdc,
-      utilization_cap: utilizationCap / 100,
-      max_open_positions: maxOpenPositions,
-      ...(takeProfitPct !== "" ? { take_profit_pct: takeProfitPct } : {}),
-      ...(stopLossPct !== "" ? { stop_loss_pct: stopLossPct } : {}),
-      mirror_close: mirrorClose,
-      health_interval_secs: healthInterval,
-      ...(source === "top_n" ? { top_n: topN } : { list_id: listId }),
-    };
-    create.mutate(body, {
-      onSuccess: () => onClose(),
-      onError: (e) => setError(e.message),
-    });
-  };
-
-  const inputCls = "w-full bg-[var(--surface-2)] border border-[var(--border-subtle)] rounded px-2 py-1 text-xs font-mono text-[var(--text-primary)] focus:outline-none focus:border-[var(--neon-green)]/50";
-  const labelCls = "text-[10px] text-[var(--text-muted)] uppercase tracking-wider mb-0.5";
-
-  return (
-    <div className="p-3 space-y-3 overflow-y-auto h-full">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold text-[var(--text-primary)]">{simulate ? "Start Simulation" : "Start Live Trading"}</span>
-        <button onClick={onClose} className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)]">Cancel</button>
-      </div>
-
-      {/* Source */}
-      <div>
-        <div className={labelCls}>Trader Source</div>
-        <div className="flex gap-1.5">
-          <button
-            className={`px-2 py-1 text-xs rounded border ${source === "top_n" ? "bg-[var(--neon-green)]/10 text-[var(--neon-green)] border-[var(--neon-green)]/30" : "bg-[var(--surface-2)] text-[var(--text-muted)] border-[var(--border-subtle)]"}`}
-            onClick={() => setSource("top_n")}
-          >
-            Top N
-          </button>
-          <button
-            className={`px-2 py-1 text-xs rounded border ${source === "list" ? "bg-[var(--neon-green)]/10 text-[var(--neon-green)] border-[var(--neon-green)]/30" : "bg-[var(--surface-2)] text-[var(--text-muted)] border-[var(--border-subtle)]"}`}
-            onClick={() => setSource("list")}
-          >
-            List
-          </button>
-        </div>
-      </div>
-
-      {source === "top_n" ? (
-        <div>
-          <div className={labelCls}>Top N traders</div>
-          <input type="number" className={inputCls} value={topN} min={1} max={50} onChange={(e) => setTopN(Number(e.target.value))} />
-        </div>
-      ) : (
-        <div>
-          <div className={labelCls}>Select List</div>
-          <select className={inputCls} value={listId} onChange={(e) => setListId(e.target.value)}>
-            <option value="">Choose...</option>
-            {lists?.map((l) => (
-              <option key={l.id} value={l.id}>{l.name} ({l.member_count})</option>
-            ))}
-          </select>
-        </div>
-      )}
-
-      <div className="grid grid-cols-2 gap-2">
-        <div>
-          <div className={labelCls}>Capital (USDC){!simulate && " (max $10 beta)"}</div>
-          <input type="number" className={inputCls} value={capital} min={1} max={simulate ? undefined : 10} onChange={(e) => setCapital(Number(e.target.value))} />
-        </div>
-        <div>
-          <div className={labelCls}>Copy %</div>
-          <input type="number" className={inputCls} value={copyPct} min={5} max={100} onChange={(e) => setCopyPct(Number(e.target.value))} />
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-2">
-        <div>
-          <div className={labelCls}>Max Position (USDC)</div>
-          <input type="number" className={inputCls} value={maxPosition} min={1} onChange={(e) => setMaxPosition(Number(e.target.value))} />
-        </div>
-        <div>
-          <div className={labelCls}>Max Slippage (bps)</div>
-          <input type="number" className={inputCls} value={maxSlippage} min={10} max={1000} onChange={(e) => setMaxSlippage(Number(e.target.value))} />
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-2">
-        <div>
-          <div className={labelCls}>Order Type</div>
-          <select className={inputCls} value={orderType} onChange={(e) => setOrderType(e.target.value as CopyOrderType)}>
-            <option value="FOK">FOK (Fill or Kill)</option>
-            <option value="GTC">GTC (Good til Canceled)</option>
-          </select>
-        </div>
-        <div>
-          <div className={labelCls}>Max Loss %</div>
-          <input type="number" className={inputCls} value={maxLossPct} min={1} max={100} onChange={(e) => setMaxLossPct(Number(e.target.value))} />
-        </div>
-      </div>
-
-      {!simulate && (
-        <div>
-          <div className={labelCls}>Live Wallet</div>
-          <select className={inputCls} value={walletId} onChange={(e) => setWalletId(e.target.value)}>
-            <option value="">Choose credentialed wallet...</option>
-            {liveWallets.map((w) => (
-              <option key={w.id} value={w.id}>{w.address.slice(0, 8)}... ({w.status})</option>
-            ))}
-          </select>
-          {liveWallets.length === 0 && (
-            <div className="text-[10px] text-red-400 mt-1">No credentialed wallet available. Derive credentials in Wallet tab first.</div>
-          )}
-        </div>
-      )}
-
-      {/* Advanced Settings */}
-      <div>
-        <button
-          className="text-[10px] text-[var(--text-muted)] hover:text-[var(--text-primary)] uppercase tracking-wider"
-          onClick={() => setShowAdvanced(!showAdvanced)}
-        >
-          {showAdvanced ? "\u25B2" : "\u25BC"} Advanced Settings
-        </button>
-      </div>
-
-      {showAdvanced && (
-        <>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <div className={labelCls}>Min Source Trade ($)</div>
-              <input type="number" className={inputCls} value={minSourceUsdc} min={0} onChange={(e) => setMinSourceUsdc(Number(e.target.value))} />
-            </div>
-            <div>
-              <div className={labelCls}>Max Open Positions</div>
-              <input type="number" className={inputCls} value={maxOpenPositions} min={1} max={100} onChange={(e) => setMaxOpenPositions(Number(e.target.value))} />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <div className={labelCls}>Utilization Cap (%)</div>
-              <input type="number" className={inputCls} value={utilizationCap} min={10} max={100} onChange={(e) => setUtilizationCap(Number(e.target.value))} />
-            </div>
-            <div>
-              <div className={labelCls}>Health Check (sec)</div>
-              <input type="number" className={inputCls} value={healthInterval} min={10} max={300} onChange={(e) => setHealthInterval(Number(e.target.value))} />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <div className={labelCls}>Take Profit (%)</div>
-              <input type="number" className={inputCls} value={takeProfitPct} min={1} max={500} placeholder="Off" onChange={(e) => setTakeProfitPct(e.target.value ? Number(e.target.value) : "")} />
-            </div>
-            <div>
-              <div className={labelCls}>Stop Loss (%)</div>
-              <input type="number" className={inputCls} value={stopLossPct} min={1} max={100} placeholder="Off" onChange={(e) => setStopLossPct(e.target.value ? Number(e.target.value) : "")} />
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="mirrorClose"
-              checked={mirrorClose}
-              onChange={(e) => setMirrorClose(e.target.checked)}
-              className="accent-[var(--neon-green)]"
-            />
-            <label htmlFor="mirrorClose" className="text-xs text-[var(--text-muted)]">Mirror source sells (close when they sell)</label>
-          </div>
-        </>
-      )}
-
-      {/* Mode: Simulate / Live */}
-      <div>
-        <div className={labelCls}>Mode</div>
-        <div className="flex gap-1.5">
-          <button
-            className={`px-2 py-1 text-xs rounded border ${simulate ? "bg-[var(--neon-green)]/10 text-[var(--neon-green)] border-[var(--neon-green)]/30" : "bg-[var(--surface-2)] text-[var(--text-muted)] border-[var(--border-subtle)]"}`}
-            onClick={() => { setSimulate(true); setShowLiveConfirm(false); setError(""); }}
-          >
-            Simulate
-          </button>
-          <button
-            className={`px-2 py-1 text-xs rounded border ${!simulate ? "bg-red-500/10 text-red-400 border-red-500/30" : "bg-[var(--surface-2)] text-[var(--text-muted)] border-[var(--border-subtle)]"}`}
-            onClick={() => { if (simulate) setShowLiveConfirm(true); }}
-          >
-            Live
-          </button>
-        </div>
-      </div>
-
-      {showLiveConfirm && simulate && (
-        <div className="border border-red-500/30 rounded p-2 bg-red-500/5">
-          <p className="text-[10px] text-red-300 mb-2">
-            Live mode places real orders using your wallet funds. This is irreversible.
-          </p>
-          <div className="flex gap-2">
-            <button
-              className="px-2 py-0.5 text-[10px] rounded border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20"
-              onClick={() => { setSimulate(false); setShowLiveConfirm(false); if (capital > 10) setCapital(10); }}
-            >
-              Confirm Live
-            </button>
-            <button
-              className="px-2 py-0.5 text-[10px] rounded border border-[var(--border-subtle)] text-[var(--text-muted)]"
-              onClick={() => setShowLiveConfirm(false)}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
-      {error && <div className="text-xs text-red-400">{error}</div>}
-
-      <button
-        className={`w-full py-1.5 text-xs font-semibold rounded border disabled:opacity-50 ${simulate ? "bg-blue-500/20 text-blue-400 border-blue-500/30 hover:bg-blue-500/30" : "bg-red-500/10 text-red-400 border-red-500/30 hover:bg-red-500/20"}`}
-        onClick={handleSubmit}
-        disabled={create.isPending || (source === "list" && !listId) || (!simulate && !walletId)}
-      >
-        {create.isPending ? "Starting..." : simulate ? "Start Simulation" : "Start Live Trading"}
-      </button>
-    </div>
-  );
-}
-
 export function SessionsTab() {
   const { data: sessions, isLoading } = useSessions();
-  const [showCreate, setShowCreate] = useState(false);
+
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-full text-xs text-[var(--text-muted)]">
+      <div className="flex items-center justify-center h-full text-xs text-[var(--text-secondary)]">
         Loading sessions...
       </div>
     );
   }
 
-  if (showCreate) {
-    return <CreateSessionForm onClose={() => setShowCreate(false)} />;
-  }
-
   if (!sessions || sessions.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3">
-        <div className="text-xs text-[var(--text-muted)]">No sessions yet</div>
+        <div className="text-xs text-[var(--text-secondary)]">No sessions yet</div>
         <button
-          className="px-4 py-2 text-xs font-semibold rounded bg-blue-500/20 text-blue-400 border border-blue-500/30 hover:bg-blue-500/30"
-          onClick={() => setShowCreate(true)}
+          className="px-4 py-2 text-xs font-semibold rounded-xl bg-[var(--accent-blue)]/15 text-[var(--accent-blue)] border border-[var(--accent-blue)]/20 hover:bg-[var(--accent-blue)]/25 transition-colors"
+          onClick={requestOpenCreateSession}
         >
-          Start Simulation
+          New Session
         </button>
       </div>
     );
@@ -515,10 +244,10 @@ export function SessionsTab() {
   return (
     <div className="p-3 space-y-2 overflow-y-auto h-full">
       <button
-        className="w-full py-1.5 text-xs font-semibold rounded bg-blue-500/20 text-blue-400 border border-blue-500/30 hover:bg-blue-500/30 mb-1"
-        onClick={() => setShowCreate(true)}
+        className="w-full py-1.5 text-xs font-semibold rounded-xl bg-[var(--accent-blue)]/15 text-[var(--accent-blue)] border border-[var(--accent-blue)]/20 hover:bg-[var(--accent-blue)]/25 transition-colors mb-1"
+        onClick={requestOpenCreateSession}
       >
-        + New Simulation
+        New Session
       </button>
       {sessions.map((s) => (
         <SessionCard key={s.id} session={s} />

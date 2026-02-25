@@ -18,6 +18,13 @@ const MAX_LOGS = 500;
 const LS_KEY = "terminal-state";
 const LOGS_LS_KEY = "terminal-logs";
 
+type TerminalUnreadSource = "copytrade" | "alert";
+
+interface TerminalUnread {
+  copytrade: number;
+  alert: number;
+}
+
 // --- State ---
 
 interface TerminalState {
@@ -28,6 +35,8 @@ interface TerminalState {
   walletStatus: WalletStatus;
   activeSessions: number;
   walletBalance: string | null;
+  unread: TerminalUnread;
+  logsJumpNonce: number;
 }
 
 // --- Actions ---
@@ -38,6 +47,10 @@ type TerminalAction =
   | { type: "SET_TAB"; tab: TerminalTab }
   | { type: "ADD_LOG"; entry: LogEntry }
   | { type: "CLEAR_LOGS" }
+  | { type: "INCR_UNREAD"; source: TerminalUnreadSource; by?: number }
+  | { type: "CLEAR_UNREAD"; source: TerminalUnreadSource }
+  | { type: "CLEAR_ALL_UNREAD" }
+  | { type: "TRIGGER_LOGS_JUMP" }
   | { type: "SET_WALLET_STATUS"; status: WalletStatus }
   | { type: "SET_ACTIVE_SESSIONS"; count: number }
   | { type: "SET_WALLET_BALANCE"; balance: string | null };
@@ -67,6 +80,36 @@ function reducer(state: TerminalState, action: TerminalAction): TerminalState {
     }
     case "CLEAR_LOGS":
       return { ...state, logs: [] };
+    case "INCR_UNREAD": {
+      const amount = Math.max(1, action.by ?? 1);
+      return {
+        ...state,
+        unread: {
+          ...state.unread,
+          [action.source]: state.unread[action.source] + amount,
+        },
+      };
+    }
+    case "CLEAR_UNREAD":
+      if (state.unread[action.source] === 0) return state;
+      return {
+        ...state,
+        unread: {
+          ...state.unread,
+          [action.source]: 0,
+        },
+      };
+    case "CLEAR_ALL_UNREAD":
+      if (state.unread.copytrade === 0 && state.unread.alert === 0) return state;
+      return {
+        ...state,
+        unread: { copytrade: 0, alert: 0 },
+      };
+    case "TRIGGER_LOGS_JUMP":
+      return {
+        ...state,
+        logsJumpNonce: state.logsJumpNonce + 1,
+      };
     case "SET_WALLET_STATUS":
       return { ...state, walletStatus: action.status };
     case "SET_ACTIVE_SESSIONS":
@@ -133,6 +176,10 @@ interface TerminalDispatchContextValue {
   toggle: () => void;
   setHeight: (h: TerminalHeight) => void;
   setActiveTab: (tab: TerminalTab) => void;
+  incrUnread: (source: TerminalUnreadSource, by?: number) => void;
+  clearUnread: (source: TerminalUnreadSource) => void;
+  clearAllUnread: () => void;
+  openLogsAndJumpToLatest: (source?: TerminalUnreadSource) => void;
   addLog: (level: LogEntry["level"], message: string, meta?: Record<string, string>, source?: LogSource) => void;
   clearLogs: () => void;
   setWalletStatus: (status: WalletStatus) => void;
@@ -157,6 +204,8 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
     walletStatus: "none",
     activeSessions: 0,
     walletBalance: null,
+    unread: { copytrade: 0, alert: 0 },
+    logsJumpNonce: 0,
   });
 
   // Persist height + tab changes
@@ -178,12 +227,56 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
 
   // Keyboard shortcuts
   useEffect(() => {
+    const isMac = /Mac|iPhone|iPad/.test(navigator.userAgent);
+
+    function isTypingTarget(target: EventTarget | null): boolean {
+      if (!(target instanceof HTMLElement)) return false;
+      const tag = target.tagName;
+      return tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable;
+    }
+
     function handleKeyDown(e: KeyboardEvent) {
+      if (isTypingTarget(e.target)) return;
+
       // Ctrl+` toggle
       if (e.ctrlKey && e.key === "`") {
         e.preventDefault();
         dispatch({ type: "TOGGLE" });
+        return;
       }
+
+      // Alt+1..4 tab shortcuts (opens terminal if collapsed)
+      if (e.altKey && !e.metaKey && !e.ctrlKey) {
+        const tabByKey: Record<string, TerminalTab> = {
+          "1": "wallet",
+          "2": "sessions",
+          "3": "logs",
+          "4": "orders",
+        };
+        const tab = tabByKey[e.key];
+        if (tab) {
+          e.preventDefault();
+          dispatch({ type: "SET_HEIGHT", height: "half" });
+          dispatch({ type: "SET_TAB", tab });
+          return;
+        }
+      }
+
+      // Cmd/Ctrl + Shift + ArrowUp/ArrowDown resize shortcuts
+      const modifierPressed = isMac ? e.metaKey : e.ctrlKey;
+      if (modifierPressed && e.shiftKey) {
+        if (e.key === "ArrowUp" && state.isOpen) {
+          e.preventDefault();
+          dispatch({ type: "SET_HEIGHT", height: "full" });
+          return;
+        }
+        if (e.key === "ArrowDown" && state.isOpen) {
+          e.preventDefault();
+          dispatch({ type: "SET_HEIGHT", height: "half" });
+          return;
+        }
+      }
+
       // Escape collapse (only when terminal is open)
       if (e.key === "Escape" && state.isOpen) {
         dispatch({ type: "SET_HEIGHT", height: "collapsed" });
@@ -198,6 +291,17 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
       toggle: () => dispatch({ type: "TOGGLE" }),
       setHeight: (height) => dispatch({ type: "SET_HEIGHT", height }),
       setActiveTab: (tab) => dispatch({ type: "SET_TAB", tab }),
+      incrUnread: (source, by) => dispatch({ type: "INCR_UNREAD", source, by }),
+      clearUnread: (source) => dispatch({ type: "CLEAR_UNREAD", source }),
+      clearAllUnread: () => dispatch({ type: "CLEAR_ALL_UNREAD" }),
+      openLogsAndJumpToLatest: (source) => {
+        dispatch({ type: "SET_HEIGHT", height: "half" });
+        dispatch({ type: "SET_TAB", tab: "logs" });
+        if (source) {
+          dispatch({ type: "CLEAR_UNREAD", source });
+        }
+        dispatch({ type: "TRIGGER_LOGS_JUMP" });
+      },
       addLog: (level, message, meta, source = "wallet") =>
         dispatch({
           type: "ADD_LOG",

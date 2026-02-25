@@ -1,5 +1,9 @@
+import { useEffect, useState } from "react";
 import { useTerminalState, useTerminalDispatch } from "./TerminalProvider";
 import type { WalletStatus } from "../../types";
+import { requestOpenCommandPalette } from "./CommandPalette";
+
+const COMMAND_HINT_KEY = "terminal-command-hint-seen";
 
 const WALLET_DOT_COLORS: Record<WalletStatus, string> = {
   none: "bg-gray-500",
@@ -9,8 +13,40 @@ const WALLET_DOT_COLORS: Record<WalletStatus, string> = {
 };
 
 export function TerminalHeader() {
-  const { height, walletStatus, activeSessions } = useTerminalState();
-  const { toggle, setHeight } = useTerminalDispatch();
+  const { height, walletStatus, activeSessions, unread } = useTerminalState();
+  const { toggle, setHeight, openLogsAndJumpToLatest } = useTerminalDispatch();
+  const isMac = /Mac|iPhone|iPad/.test(navigator.userAgent);
+  const commandHintLabel = isMac ? "⌘K" : "Ctrl+K";
+  const [showCommandHint, setShowCommandHint] = useState(false);
+
+  useEffect(() => {
+    if (height === "collapsed") return;
+    try {
+      const seen = localStorage.getItem(COMMAND_HINT_KEY) === "1";
+      if (!seen) {
+        setShowCommandHint(true);
+        const timer = setTimeout(() => {
+          setShowCommandHint(false);
+          localStorage.setItem(COMMAND_HINT_KEY, "1");
+        }, 8000);
+        return () => clearTimeout(timer);
+      }
+    } catch {
+      // ignore
+    }
+  }, [height]);
+
+  const formatUnread = (count: number) => (count > 99 ? "99+" : String(count));
+
+  const handleOpenCommands = () => {
+    setShowCommandHint(false);
+    try {
+      localStorage.setItem(COMMAND_HINT_KEY, "1");
+    } catch {
+      // ignore
+    }
+    requestOpenCommandPalette();
+  };
 
   return (
     <div
@@ -37,6 +73,29 @@ export function TerminalHeader() {
         Terminal
       </span>
 
+      {height === "collapsed" && (unread.copytrade > 0 || unread.alert > 0) && (
+        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+          {unread.copytrade > 0 && (
+            <button
+              className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500/20 text-green-300 border border-green-500/30 font-mono"
+              onClick={() => openLogsAndJumpToLatest("copytrade")}
+              title="Open logs and jump to latest copy-trade events"
+            >
+              CT {formatUnread(unread.copytrade)}
+            </button>
+          )}
+          {unread.alert > 0 && (
+            <button
+              className="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-500/20 text-yellow-200 border border-yellow-500/30 font-mono"
+              onClick={() => openLogsAndJumpToLatest("alert")}
+              title="Open logs and jump to latest alerts"
+            >
+              ALT {formatUnread(unread.alert)}
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Wallet status dot */}
       <div className={`w-2 h-2 rounded-full ${WALLET_DOT_COLORS[walletStatus]}`} />
 
@@ -44,6 +103,25 @@ export function TerminalHeader() {
       {activeSessions > 0 && (
         <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[var(--accent-blue)]/20 text-[var(--accent-blue)] font-medium">
           {activeSessions} session{activeSessions !== 1 ? "s" : ""}
+        </span>
+      )}
+
+      {height !== "collapsed" && (
+        <button
+          className="text-[10px] px-2 py-0.5 rounded border border-white/10 hover:bg-white/5 text-[var(--text-secondary)] font-mono"
+          onClick={(e) => {
+            e.stopPropagation();
+            handleOpenCommands();
+          }}
+          title="Open command palette"
+        >
+          Commands {commandHintLabel}
+        </button>
+      )}
+
+      {height !== "collapsed" && showCommandHint && (
+        <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent-blue)]/15 text-[var(--accent-blue)] border border-[var(--accent-blue)]/25 animate-pulse">
+          Tip: {commandHintLabel}
         </span>
       )}
 

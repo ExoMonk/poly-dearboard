@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 export interface TraderSummary {
   address: string;
   total_volume: string;
@@ -484,6 +486,17 @@ export type TerminalTab = "wallet" | "sessions" | "logs" | "orders";
 export type TerminalHeight = "collapsed" | "half" | "full";
 export type WalletStatus = "none" | "setup" | "funded" | "active";
 
+export interface PaletteCommand {
+  id: string;
+  label: string;
+  section: "Navigation" | "Terminal" | "Session" | "Quick Actions";
+  icon?: ReactNode;
+  shortcut?: string;
+  keywords?: string[];
+  action: () => void;
+  available?: () => boolean;
+}
+
 // Copy-Trade Engine (spec 15)
 export type SessionStatus = "running" | "paused" | "stopped";
 export type CopyOrderType = "FOK" | "GTC";
@@ -507,6 +520,8 @@ export interface CreateSessionRequest {
   stop_loss_pct?: number;
   mirror_close?: boolean;
   health_interval_secs?: number;
+  max_source_price?: number;
+  min_source_price?: number;
 }
 
 export interface CopyTradeSession {
@@ -530,6 +545,8 @@ export interface CopyTradeSession {
   stop_loss_pct: number | null;
   mirror_close: boolean;
   health_interval_secs: number;
+  max_source_price: number;
+  min_source_price: number;
   status: SessionStatus;
   created_at: string;
   updated_at: string;
