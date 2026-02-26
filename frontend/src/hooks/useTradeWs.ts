@@ -12,6 +12,7 @@ interface Params {
 export default function useTradeWs({ tokenIds }: Params) {
   const [liveTrades, setLiveTrades] = useState<FeedTrade[]>([]);
   const [connected, setConnected] = useState(false);
+  const [lastEventAt, setLastEventAt] = useState<number | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const retryRef = useRef(0);
 
@@ -36,6 +37,7 @@ export default function useTradeWs({ tokenIds }: Params) {
     ws.onmessage = (event) => {
       try {
         const trade: FeedTrade = JSON.parse(event.data);
+        setLastEventAt(Date.now());
         setLiveTrades((prev) => {
           if (prev.some((t) => t.tx_hash === trade.tx_hash)) return prev;
           return [trade, ...prev].slice(0, MAX_TRADES);
@@ -62,11 +64,12 @@ export default function useTradeWs({ tokenIds }: Params) {
   }, [tokenIds]);
 
   useEffect(() => {
+    setLastEventAt(null);
     connect();
     return () => {
       wsRef.current?.close();
     };
   }, [connect]);
 
-  return { liveTrades, connected };
+  return { liveTrades, connected, lastEventAt };
 }

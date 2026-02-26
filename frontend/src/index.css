@@ -17,6 +17,16 @@
   --bronze: #cd7f32;
 }
 
+/* Hide default number input spinners */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
 @layer base {
   body {
     margin: 0;
@@ -212,6 +222,21 @@
   100% { background-color: transparent; }
 }
 
+@keyframes deltaPositive {
+  0% { background-color: rgba(34, 197, 94, 0.28); }
+  100% { background-color: transparent; }
+}
+
+@keyframes deltaNegative {
+  0% { background-color: rgba(239, 68, 68, 0.28); }
+  100% { background-color: transparent; }
+}
+
+@keyframes deltaNeutral {
+  0% { background-color: rgba(59, 130, 246, 0.24); }
+  100% { background-color: transparent; }
+}
+
 .animate-highlight-green {
   animation: highlightGreen 3s ease-out forwards;
 }
@@ -226,6 +251,18 @@
 }
 .animate-highlight-orange {
   animation: highlightOrange 3s ease-out forwards;
+}
+
+.delta-flash-positive {
+  animation: deltaPositive 2s ease-out forwards;
+}
+
+.delta-flash-negative {
+  animation: deltaNegative 2s ease-out forwards;
+}
+
+.delta-flash-neutral {
+  animation: deltaNeutral 2s ease-out forwards;
 }
 
 /* Reduced motion */

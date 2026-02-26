@@ -15,6 +15,11 @@ import {
   polygonscanTx,
 } from "../lib/format";
 import { staggerContainer, statCardVariants } from "../lib/motion";
+import {
+  freshnessLabel,
+} from "../lib/streamControls";
+
+const MAX_RENDER_TRADES = 200;
 
 function formatCents(priceStr: string): string {
   const num = parseFloat(priceStr);
@@ -32,6 +37,7 @@ export default function MarketDetail() {
 
   const prevIdsRef = useRef<Set<string>>(new Set());
   const [newIds, setNewIds] = useState<Set<string>>(new Set());
+  const [nowTs, setNowTs] = useState(() => Date.now());
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["marketTrades", decodedTokenIds],
@@ -47,9 +53,19 @@ export default function MarketDetail() {
   });
 
   // Live trade stream from our backend WS
-  const { liveTrades, connected: tradeWsConnected } = useTradeWs({
+  const { liveTrades, connected: tradeWsConnected, lastEventAt } = useTradeWs({
     tokenIds: decodedTokenIds,
   });
+  const feedFreshness = tradeWsConnected ? "Live" : freshnessLabel(lastEventAt, nowTs);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowTs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    setNewIds(new Set());
+  }, [decodedTokenIds]);
 
   // Merge HTTP backfill + WS live trades (dedup by tx_hash)
   const mergedTrades = useMemo(() => {
@@ -60,21 +76,30 @@ export default function MarketDetail() {
     return [...newFromWs, ...httpTrades];
   }, [data?.trades, liveTrades]);
 
+  const tableTrades = useMemo(() => {
+    const httpTrades = data?.trades ?? [];
+    if (!liveTrades.length) return httpTrades;
+    const seen = new Set(httpTrades.map((t) => t.tx_hash));
+    const newFromWs = liveTrades.filter((t) => !seen.has(t.tx_hash));
+    return [...newFromWs, ...httpTrades].slice(0, MAX_RENDER_TRADES);
+  }, [data?.trades, liveTrades]);
+
   // Highlight newly appeared trades
   useEffect(() => {
-    if (!mergedTrades.length) return;
-    const currentIds = new Set(mergedTrades.map((t) => t.tx_hash));
+    if (!tableTrades.length) return;
+    const currentIds = new Set(tableTrades.map((t) => t.tx_hash));
     const fresh = new Set<string>();
     for (const id of currentIds) {
       if (!prevIdsRef.current.has(id)) fresh.add(id);
     }
     if (fresh.size > 0 && prevIdsRef.current.size > 0) {
       setNewIds(fresh);
-      const timer = setTimeout(() => setNewIds(new Set()), 1500);
+      const timer = setTimeout(() => setNewIds(new Set()), 2000);
+      prevIdsRef.current = currentIds;
       return () => clearTimeout(timer);
     }
     prevIdsRef.current = currentIds;
-  }, [mergedTrades]);
+  }, [tableTrades]);
 
   // Derive primary/secondary token IDs (stable across renders).
   // For Yes/No markets: yesTokenId=Yes, noTokenId=No.
@@ -249,7 +274,8 @@ export default function MarketDetail() {
 
       {/* Live Feed */}
       <div>
-        <div className="flex items-center gap-3 mb-4">
+        <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+          <div className="flex items-center gap-3">
           <h2 className="text-lg font-bold gradient-text">Live Feed</h2>
           <span className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
             <span
@@ -261,9 +287,19 @@ export default function MarketDetail() {
             />
             {tradeWsConnected ? "Live" : "Reconnecting"}
           </span>
+            <span
+              className={`text-xs px-2 py-1 rounded-full ${
+                feedFreshness === "Live" || feedFreshness === "Updated <10s"
+                  ? "text-[var(--neon-green)] bg-[var(--neon-green)]/10"
+                  : "text-[var(--accent-orange)] bg-[var(--accent-orange)]/10"
+              }`}
+            >
+              {feedFreshness}
+            </span>
+            </div>
         </div>
 
-        {mergedTrades.length > 0 ? (
+        {tableTrades.length > 0 ? (
           <div className="glass overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -280,14 +316,14 @@ export default function MarketDetail() {
                   </tr>
                 </thead>
                 <tbody>
-                  {mergedTrades.map((t, i) => (
+                  {tableTrades.map((t, i) => (
                     <motion.tr
                       key={`${t.tx_hash}-${i}`}
                       initial={{ opacity: 0, x: -8 }}
                       animate={{ opacity: 1, x: 0 }}
                       transition={{ duration: 0.25, delay: i * 0.02 }}
-                      className={`border-b border-[var(--border-subtle)] row-glow transition-colors duration-700 ${
-                        newIds.has(t.tx_hash) ? "bg-[var(--accent-blue)]/8" : ""
+                      className={`border-b border-[var(--border-subtle)] row-glow ${
+                        newIds.has(t.tx_hash) ? "delta-flash-neutral" : ""
                       }`}
                     >
                       <td className="px-4 py-3 text-[var(--text-secondary)] whitespace-nowrap text-xs">

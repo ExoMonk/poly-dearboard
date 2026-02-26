@@ -50,7 +50,11 @@ export function TerminalHeader() {
 
   return (
     <div
-      className="flex items-center h-10 px-3 gap-3 cursor-pointer select-none border-b border-white/5"
+      className={`flex items-center h-10 px-3 gap-3 cursor-pointer select-none ${
+        height === "collapsed"
+          ? "border-b border-transparent"
+          : "border-b border-white/5"
+      }`}
       onClick={toggle}
       onDoubleClick={() => setHeight(height === "full" ? "half" : "full")}
     >

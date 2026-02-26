@@ -17,6 +17,7 @@ export default function useSignalFeed({ listId, topN }: Params) {
   const [alerts, setAlerts] = useState<ConvergenceAlert[]>([]);
   const [connected, setConnected] = useState(false);
   const [isLagging, setIsLagging] = useState(false);
+  const [lastEventAt, setLastEventAt] = useState<number | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const retryRef = useRef(0);
 
@@ -47,6 +48,7 @@ export default function useSignalFeed({ listId, topN }: Params) {
     ws.onmessage = (event) => {
       try {
         const msg: SignalMessage = JSON.parse(event.data);
+        setLastEventAt(Date.now());
         switch (msg.kind) {
           case "Trade":
             setTrades((prev) => {
@@ -86,11 +88,12 @@ export default function useSignalFeed({ listId, topN }: Params) {
     setTrades([]);
     setAlerts([]);
     setIsLagging(false);
+    setLastEventAt(null);
     connect();
     return () => {
       wsRef.current?.close();
     };
   }, [connect]);
 
-  return { trades, alerts, connected, isLagging };
+  return { trades, alerts, connected, isLagging, lastEventAt };
 }

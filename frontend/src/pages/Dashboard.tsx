@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { motion } from "motion/react";
 import { fetchLeaderboard } from "../api";
@@ -13,6 +13,7 @@ import SmartMoney from "../charts/SmartMoney";
 import AddToListButton from "../components/AddToListButton";
 import { formatUsd, formatNumber, formatDate, timeAgo } from "../lib/format";
 import { tapScale } from "../lib/motion";
+import { freshnessLabel } from "../lib/streamControls";
 
 const PAGE_SIZE = 25;
 
@@ -34,12 +35,81 @@ export default function Dashboard() {
   const [order, setOrder] = useState<SortOrder>("desc");
   const [offset, setOffset] = useState(0);
   const [timeframe, setTimeframe] = useState<Timeframe>("24h");
+  const [deltaByKey, setDeltaByKey] = useState<Record<string, "positive" | "negative" | "neutral">>({});
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
+  const [nowTs, setNowTs] = useState(() => Date.now());
+  const prevSnapshotRef = useRef<Record<string, { rank: number; realizedPnl: number; volume: number; trades: number }>>({});
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["leaderboard", sort, order, offset, timeframe],
     queryFn: () => fetchLeaderboard({ sort, order, limit: PAGE_SIZE, offset, timeframe }),
     placeholderData: keepPreviousData,
   });
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowTs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!data) return;
+    setLastUpdatedAt(Date.now());
+
+    const prev = prevSnapshotRef.current;
+    const next: Record<string, { rank: number; realizedPnl: number; volume: number; trades: number }> = {};
+    const changes: Record<string, "positive" | "negative" | "neutral"> = {};
+
+    data.traders.forEach((trader, index) => {
+      const address = trader.address.toLowerCase();
+      const rank = offset + index + 1;
+      const current = {
+        rank,
+        realizedPnl: Number.parseFloat(trader.realized_pnl),
+        volume: Number.parseFloat(trader.total_volume),
+        trades: trader.trade_count,
+      };
+      next[address] = current;
+
+      const previous = prev[address];
+      if (!previous) {
+        if (Object.keys(prev).length > 0) {
+          changes[`${address}:rank`] = "neutral";
+        }
+        return;
+      }
+
+      if (current.rank !== previous.rank) {
+        changes[`${address}:rank`] = current.rank < previous.rank ? "positive" : "negative";
+      }
+      if (current.realizedPnl !== previous.realizedPnl) {
+        changes[`${address}:pnl`] = current.realizedPnl > previous.realizedPnl ? "positive" : "negative";
+      }
+      if (current.volume !== previous.volume) {
+        changes[`${address}:volume`] = current.volume > previous.volume ? "positive" : "negative";
+      }
+      if (current.trades !== previous.trades) {
+        changes[`${address}:trades`] = current.trades > previous.trades ? "positive" : "negative";
+      }
+    });
+
+    prevSnapshotRef.current = next;
+    if (Object.keys(changes).length > 0) {
+      setDeltaByKey(changes);
+      const timer = window.setTimeout(() => setDeltaByKey({}), 2000);
+      return () => window.clearTimeout(timer);
+    }
+  }, [data, offset]);
+
+  const freshness = useMemo(() => freshnessLabel(lastUpdatedAt, nowTs), [lastUpdatedAt, nowTs]);
+  const freshnessDisplay = freshness === "Stale" ? "Refreshing..." : freshness;
+
+  const deltaClass = (key: string): string => {
+    const kind = deltaByKey[key];
+    if (kind === "positive") return "delta-flash-positive";
+    if (kind === "negative") return "delta-flash-negative";
+    if (kind === "neutral") return "delta-flash-neutral";
+    return "";
+  };
 
   function handleSort(col: SortColumn) {
     if (col === sort) {
@@ -78,7 +148,18 @@ export default function Dashboard() {
             ))}
           </div>
         </div>
-        <span className="text-sm text-[var(--text-secondary)] font-mono">{data.total.toLocaleString()} traders</span>
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-[var(--text-secondary)] font-mono">{data.total.toLocaleString()} traders</span>
+          <span
+            className={`text-xs px-2 py-1 rounded-full ${
+              freshness === "Updated <10s"
+                ? "text-[var(--neon-green)] bg-[var(--neon-green)]/10"
+                : "text-[var(--accent-orange)] bg-[var(--accent-orange)]/10"
+            }`}
+          >
+            {freshnessDisplay}
+          </span>
+        </div>
       </div>
 
       {/* Chart */}
@@ -106,6 +187,7 @@ export default function Dashboard() {
               {data.traders.map((t, i) => {
                 const rank = offset + i + 1;
                 const pnl = parseFloat(t.realized_pnl);
+                const addrKey = t.address.toLowerCase();
                 return (
                   <motion.tr
                     key={t.address}
@@ -114,7 +196,7 @@ export default function Dashboard() {
                     transition={{ duration: 0.25, delay: i * 0.03 }}
                     className="border-b border-[var(--border-subtle)] row-glow"
                   >
-                    <td className={`px-4 py-3 font-mono text-sm ${rankClass(rank)}`}>{rank}</td>
+                    <td className={`px-4 py-3 font-mono text-sm ${rankClass(rank)} ${deltaClass(`${addrKey}:rank`)}`}>{rank}</td>
                     <td className="px-4 py-3">
                       <AddressCell address={t.address} />
                     </td>
@@ -133,11 +215,11 @@ export default function Dashboard() {
                         })}
                       </div>
                     </td>
-                    <td className={`px-4 py-3 text-right font-mono ${pnl >= 0 ? "glow-green" : "glow-red"}`}>
+                    <td className={`px-4 py-3 text-right font-mono ${pnl >= 0 ? "glow-green" : "glow-red"} ${deltaClass(`${addrKey}:pnl`)}`}>
                       {formatUsd(t.realized_pnl)}
                     </td>
-                    <td className="px-4 py-3 text-right font-mono text-[var(--text-primary)]">{formatUsd(t.total_volume)}</td>
-                    <td className="px-4 py-3 text-right font-mono text-[var(--text-primary)]">{formatNumber(t.trade_count)}</td>
+                    <td className={`px-4 py-3 text-right font-mono text-[var(--text-primary)] ${deltaClass(`${addrKey}:volume`)}`}>{formatUsd(t.total_volume)}</td>
+                    <td className={`px-4 py-3 text-right font-mono text-[var(--text-primary)] ${deltaClass(`${addrKey}:trades`)}`}>{formatNumber(t.trade_count)}</td>
                     <td className="px-4 py-3 text-right text-[var(--text-secondary)]">{formatNumber(t.markets_traded)}</td>
                     <td className="px-4 py-3 text-right text-[var(--text-secondary)] hidden lg:table-cell">{formatDate(t.first_trade)}</td>
                     <td className="px-4 py-3 text-right text-[var(--text-secondary)] hidden lg:table-cell">{timeAgo(t.last_trade)}</td>

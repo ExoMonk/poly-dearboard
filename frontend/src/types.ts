@@ -101,8 +101,10 @@ export interface OpenPosition {
 }
 
 export interface PositionsResponse {
-  open: OpenPosition[];
-  closed: OpenPosition[];
+  positions: OpenPosition[];
+  total: number;
+  open_count: number;
+  closed_count: number;
 }
 
 export interface PnlChartPoint {
@@ -173,6 +175,7 @@ export interface CategoryStats {
 
 export interface LabelDetails {
   win_rate: number;
+  win_rate_confidence: "low" | "medium" | "high";
   z_score: number;
   settled_count: number;
   dominant_category: string;

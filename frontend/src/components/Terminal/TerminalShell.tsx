@@ -115,7 +115,11 @@ export function TerminalShell() {
 
   return (
     <motion.div
-      className="fixed bottom-0 left-0 right-0 z-40 flex flex-col glass border-t border-[var(--border-glow)]"
+      className={`fixed bottom-0 left-0 right-0 z-40 flex flex-col ${
+        height === "collapsed"
+          ? "border-t border-transparent bg-transparent"
+          : "border-t border-[var(--border-glow)] glass"
+      }`}
       animate={{ height: HEIGHT_MAP[height] }}
       transition={{ type: "spring", stiffness: 300, damping: 30 }}
     >

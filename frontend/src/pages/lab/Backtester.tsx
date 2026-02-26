@@ -58,6 +58,7 @@ export default function Backtester() {
   const [listId, setListId] = useState<string | null>(null);
   const [timeframe, setTimeframe] = useState<BacktestTimeframe>("30d");
   const [capital, setCapital] = useState<number>(10000);
+  const [capitalInput, setCapitalInput] = useState<string>("10000");
   const [copyPct, setCopyPct] = useState<number>(1.0);
   const [chartMode, setChartMode] = useState<ChartMode>("value");
 
@@ -129,9 +130,18 @@ export default function Backtester() {
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--accent-blue)] text-sm font-mono font-bold">$</span>
                 <input
                   type="number"
-                  value={capital}
-                  onChange={(e) => setCapital(Math.max(100, Number(e.target.value)))}
-                  className="w-36 pl-7 pr-3 py-2 text-sm font-mono rounded-lg bg-[var(--bg-deep)] border border-[var(--border-glow)] text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none focus:shadow-[0_0_12px_rgba(59,130,246,0.2)] transition-all appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                  value={capitalInput}
+                  onChange={(e) => {
+                    setCapitalInput(e.target.value);
+                    const n = Number(e.target.value);
+                    if (n >= 100) setCapital(n);
+                  }}
+                  onBlur={() => {
+                    const clamped = Math.min(Math.max(100, Number(capitalInput) || 100), 1000000);
+                    setCapital(clamped);
+                    setCapitalInput(String(clamped));
+                  }}
+                  className="w-36 pl-7 pr-3 py-2 text-sm font-mono rounded-lg bg-[var(--bg-deep)] border border-[var(--border-glow)] text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none focus:shadow-[0_0_12px_rgba(59,130,246,0.2)] transition-all"
                   min={100}
                   max={1000000}
                   step={1000}

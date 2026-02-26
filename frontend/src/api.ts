@@ -138,8 +138,16 @@ export async function fetchRecentTrades(params?: {
   return res.json();
 }
 
-export async function fetchTraderPositions(address: string): Promise<PositionsResponse> {
-  const res = await authFetch(`${BASE}/trader/${address}/positions`);
+export async function fetchTraderPositions(
+  address: string,
+  params?: { status?: string; limit?: number; offset?: number },
+): Promise<PositionsResponse> {
+  const sp = new URLSearchParams();
+  if (params?.status) sp.set("status", params.status);
+  if (params?.limit) sp.set("limit", String(params.limit));
+  if (params?.offset !== undefined) sp.set("offset", String(params.offset));
+  const qs = sp.toString();
+  const res = await authFetch(`${BASE}/trader/${address}/positions${qs ? `?${qs}` : ""}`);
   if (!res.ok) throw new Error(`Positions fetch failed: ${res.status}`);
   return res.json();
 }

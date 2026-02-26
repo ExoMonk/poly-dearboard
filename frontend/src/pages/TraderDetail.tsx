@@ -14,6 +14,7 @@ import { labelTooltip } from "../lib/labels";
 import { staggerContainer, statCardVariants, tapScale } from "../lib/motion";
 
 const PAGE_SIZE = 50;
+const POS_PAGE_SIZE = 10;
 type PosTab = "open" | "closed";
 
 export default function TraderDetail() {
@@ -21,7 +22,10 @@ export default function TraderDetail() {
   const [sideFilter, setSideFilter] = useState("");
   const [offset, setOffset] = useState(0);
   const [posTab, setPosTab] = useState<PosTab>("open");
+  const [posOffset, setPosOffset] = useState(0);
   const [pnlTimeframe, setPnlTimeframe] = useState<PnlTimeframe>("all");
+  const [catExpanded, setCatExpanded] = useState(false);
+  const [redemExpanded, setRedemExpanded] = useState(false);
 
   const { data: trader, isLoading: loadingTrader, error: traderError } = useQuery({
     queryKey: ["trader", address],
@@ -37,9 +41,10 @@ export default function TraderDetail() {
   });
 
   const { data: positionsData } = useQuery({
-    queryKey: ["positions", address],
-    queryFn: () => fetchTraderPositions(address!),
+    queryKey: ["positions", address, posTab, posOffset],
+    queryFn: () => fetchTraderPositions(address!, { status: posTab, limit: POS_PAGE_SIZE, offset: posOffset }),
     enabled: !!address,
+    placeholderData: keepPreviousData,
   });
 
   const { data: pnlChart } = useQuery({
@@ -173,7 +178,7 @@ export default function TraderDetail() {
         <div>
           <h2 className="text-lg font-bold gradient-text mb-4">Category Breakdown</h2>
           <div className="glass p-4 space-y-3">
-            {profile.category_breakdown.map((cat) => {
+            {profile.category_breakdown.slice(0, catExpanded ? undefined : 3).map((cat) => {
               const vol = parseFloat(cat.volume);
               const totalVol = parseFloat(profile.label_details.total_volume);
               const pct = totalVol > 0 ? (vol / totalVol) * 100 : 0;
@@ -203,6 +208,14 @@ export default function TraderDetail() {
                 </div>
               );
             })}
+            {profile.category_breakdown.length > 3 && (
+              <button
+                onClick={() => setCatExpanded(!catExpanded)}
+                className="w-full mt-1 py-1.5 text-[11px] font-medium text-[var(--accent-blue)] hover:text-[var(--accent-blue)]/80 transition-colors"
+              >
+                {catExpanded ? "Show less" : `Show ${profile.category_breakdown.length - 3} more`}
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -217,18 +230,18 @@ export default function TraderDetail() {
       )}
 
       {/* Positions */}
-      {positionsData && (positionsData.open.length > 0 || positionsData.closed.length > 0) && (
+      {positionsData && (positionsData.open_count > 0 || positionsData.closed_count > 0) && (
         <div>
           <div className="flex items-center gap-4 mb-4">
             <h2 className="text-lg font-bold gradient-text">Positions</h2>
             <div className="flex gap-1">
               {([
-                { value: "open" as PosTab, label: "Open", count: positionsData.open.length },
-                { value: "closed" as PosTab, label: "Closed", count: positionsData.closed.length },
+                { value: "open" as PosTab, label: "Open", count: positionsData.open_count },
+                { value: "closed" as PosTab, label: "Closed", count: positionsData.closed_count },
               ]).map((tab) => (
                 <motion.button
                   key={tab.value}
-                  onClick={() => setPosTab(tab.value)}
+                  onClick={() => { setPosTab(tab.value); setPosOffset(0); }}
                   whileTap={tapScale}
                   className={`px-4 py-1.5 text-xs rounded-full font-medium transition-all duration-200 ${
                     posTab === tab.value
@@ -241,7 +254,8 @@ export default function TraderDetail() {
               ))}
             </div>
           </div>
-          <PositionsTable positions={posTab === "open" ? positionsData.open : positionsData.closed} />
+          <PositionsTable positions={positionsData.positions} />
+          <Pagination total={positionsData.total} limit={POS_PAGE_SIZE} offset={posOffset} onPageChange={setPosOffset} />
         </div>
       )}
 
@@ -267,7 +281,7 @@ export default function TraderDetail() {
                   </tr>
                 </thead>
                 <tbody>
-                  {redemptionsData.redemptions.map((r, i) => (
+                  {redemptionsData.redemptions.slice(0, redemExpanded ? undefined : 3).map((r, i) => (
                     <motion.tr
                       key={`${r.tx_hash}-${i}`}
                       initial={{ opacity: 0, x: -8 }}
@@ -309,6 +323,14 @@ export default function TraderDetail() {
               </table>
             </div>
           </div>
+          {redemptionsData.redemptions.length > 3 && (
+            <button
+              onClick={() => setRedemExpanded(!redemExpanded)}
+              className="w-full mt-2 py-1.5 text-[11px] font-medium text-[var(--accent-blue)] hover:text-[var(--accent-blue)]/80 transition-colors"
+            >
+              {redemExpanded ? "Show less" : `Show ${redemptionsData.redemptions.length - 3} more`}
+            </button>
+          )}
         </div>
       )}
 

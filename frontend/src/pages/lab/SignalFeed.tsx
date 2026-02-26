@@ -4,16 +4,24 @@ import { useSessions } from "../../hooks/useCopyTrade";
 import { useTerminal } from "../../components/Terminal/TerminalProvider";
 import { requestOpenCreateSession } from "../../components/Terminal/CreateSessionModal";
 import ListSelector from "./ListSelector";
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { shortenAddress, formatUsd, polygonscanTx } from "../../lib/format";
 import { panelVariants, alertCardVariants } from "../../lib/motion";
 import { SectionHeader } from "./shared";
+import type { SignalTrade } from "../../types";
 
 const DEFAULT_TOP_N = 20;
+const MAX_RENDER_TRADES = 200;
 
 export default function SignalFeed() {
   const [listId, setListId] = useState<string | null>(null);
+  const [displayTrades, setDisplayTrades] = useState<SignalTrade[]>([]);
+  const [highlightIds, setHighlightIds] = useState<Set<string>>(new Set());
+
+  const seenTradeIdsRef = useRef<Set<string>>(new Set());
+  const highlightTimerRef = useRef<number | null>(null);
+
   const { data: sessions } = useSessions();
   const { setActiveTab, setHeight } = useTerminal();
   const hasActiveSession = sessions?.some((s) => s.status !== "stopped");
@@ -21,6 +29,48 @@ export default function SignalFeed() {
     listId,
     topN: listId ? undefined : DEFAULT_TOP_N,
   });
+
+  const enqueueHighlights = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    setHighlightIds((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => next.add(id));
+      return next;
+    });
+    if (highlightTimerRef.current) {
+      window.clearTimeout(highlightTimerRef.current);
+    }
+    highlightTimerRef.current = window.setTimeout(() => {
+      setHighlightIds(new Set());
+      highlightTimerRef.current = null;
+    }, 2000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current) {
+        window.clearTimeout(highlightTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    seenTradeIdsRef.current = new Set();
+    setDisplayTrades([]);
+    setHighlightIds(new Set());
+  }, [listId]);
+
+  useEffect(() => {
+    const incoming = trades.filter((trade) => !seenTradeIdsRef.current.has(trade.tx_hash));
+    if (incoming.length === 0) return;
+
+    incoming.forEach((trade) => seenTradeIdsRef.current.add(trade.tx_hash));
+
+    setDisplayTrades((prev) => [...incoming, ...prev].slice(0, MAX_RENDER_TRADES));
+    enqueueHighlights(incoming.map((trade) => trade.tx_hash));
+  }, [trades, enqueueHighlights]);
+
+  const visibleTrades = displayTrades;
 
   return (
     <div className="space-y-4">
@@ -72,23 +122,23 @@ export default function SignalFeed() {
           {/* Trade stream — 2/3 width */}
           <div className="lg:col-span-2 space-y-2">
             <SectionHeader dot="bg-[var(--accent-blue)] shadow-[0_0_6px_var(--accent-blue)]">
-              Live Trades ({trades.length})
+              Live Trades ({visibleTrades.length})
             </SectionHeader>
-            {trades.length === 0 ? (
+            {visibleTrades.length === 0 ? (
               <div className="glass p-8 text-center">
                 <p className="text-[var(--text-secondary)] text-sm">Waiting for trades...</p>
               </div>
             ) : (
               <div className="space-y-1.5 max-h-[600px] overflow-y-auto">
                 <AnimatePresence initial={false}>
-                  {trades.map((t) => (
+                  {visibleTrades.map((t) => (
                     <motion.div
                       key={t.tx_hash}
                       variants={alertCardVariants}
                       initial="initial"
                       animate="animate"
                       exit="exit"
-                      className="glass px-4 py-3 flex items-center gap-3 text-sm"
+                      className={`glass flex items-center gap-3 px-4 py-3 text-sm ${highlightIds.has(t.tx_hash) ? "delta-flash-neutral" : ""}`}
                     >
                       <span
                         className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full tracking-wide ${
