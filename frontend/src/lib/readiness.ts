@@ -22,7 +22,7 @@ export const REASON_COPY: Record<string, { short: string; detail: string }> = {
   volume_maker_penalty: {
     short: "Volume maker",
     detail:
-      "High volume in near-resolved markets — may not reflect directional edge",
+      "High volume in near-resolved markets — penalty scaled by concentration",
   },
   low_sample_penalty: {
     short: "Low sample",
@@ -31,6 +31,14 @@ export const REASON_COPY: Record<string, { short: string; detail: string }> = {
   low_activity_penalty: {
     short: "Limited history",
     detail: "Limited market breadth or trading history",
+  },
+  strong_roi: {
+    short: "Strong ROI",
+    detail: "5%+ return on total volume traded",
+  },
+  pnl_bonus: {
+    short: "High PnL",
+    detail: "Significant realized profit demonstrating sustained edge",
   },
 };
 

@@ -117,6 +117,16 @@ export interface PnlChartResponse {
   points: PnlChartPoint[];
 }
 
+export interface PnlBar {
+  date: string;
+  realized: string;
+  unrealized?: string;
+}
+
+export interface PnlBarChartResponse {
+  bars: PnlBar[];
+}
+
 export interface ResolvedMarket {
   question: string;
   outcome: string;
@@ -225,6 +235,8 @@ export interface ReadinessMetrics {
   active_span_days: number;
   near_resolved_volume_ratio?: number;
   avg_hold_hours?: number;
+  roi?: number;
+  adjusted_win_rate?: number;
 }
 
 export interface TraderReadiness {

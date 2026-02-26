@@ -6,7 +6,7 @@ import type {
   HotMarketsResponse,
   LiveFeedResponse,
   PositionsResponse,
-  PnlChartResponse,
+  PnlBarChartResponse,
   ResolvedMarket,
   SmartMoneyResponse,
   TraderProfile,
@@ -152,7 +152,7 @@ export async function fetchTraderPositions(
   return res.json();
 }
 
-export async function fetchPnlChart(address: string, timeframe?: PnlTimeframe): Promise<PnlChartResponse> {
+export async function fetchPnlChart(address: string, timeframe?: PnlTimeframe): Promise<PnlBarChartResponse> {
   const sp = new URLSearchParams();
   if (timeframe && timeframe !== "all") sp.set("timeframe", timeframe);
   const res = await authFetch(`${BASE}/trader/${address}/pnl-chart?${sp}`);

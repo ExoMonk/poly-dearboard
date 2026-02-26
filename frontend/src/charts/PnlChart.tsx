@@ -1,21 +1,22 @@
 import { memo } from "react";
 import {
-  AreaChart,
-  Area,
+  BarChart,
+  Bar,
   XAxis,
   YAxis,
   Tooltip,
   ReferenceLine,
   ResponsiveContainer,
   CartesianGrid,
+  Cell,
 } from "recharts";
 import { motion } from "motion/react";
-import type { PnlChartPoint, PnlTimeframe } from "../types";
+import type { PnlBar, PnlTimeframe } from "../types";
 import { formatUsd } from "../lib/format";
 import { panelVariants, tapScale } from "../lib/motion";
 
 interface Props {
-  points: PnlChartPoint[];
+  bars: PnlBar[];
   timeframe: PnlTimeframe;
   onTimeframeChange: (tf: PnlTimeframe) => void;
 }
@@ -35,6 +36,9 @@ const TOOLTIP_STYLE = {
   boxShadow: "0 4px 20px rgba(0, 0, 0, 0.5)",
 };
 
+const GREEN = "#00ff88";
+const RED = "#ff3366";
+
 function formatDateLabel(dateStr: string, timeframe: PnlTimeframe): string {
   const isHourly = dateStr.includes(" ");
   const d = new Date(isHourly ? dateStr.replace(" ", "T") : dateStr);
@@ -46,17 +50,38 @@ function formatDateLabel(dateStr: string, timeframe: PnlTimeframe): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-export default memo(function PnlChart({ points, timeframe, onTimeframeChange }: Props) {
-  const data = points.map((p) => ({
-    date: formatDateLabel(p.date, timeframe),
-    pnl: parseFloat(p.pnl),
-  }));
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function CustomTooltip({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null;
+  const realized = payload.find((p: any) => p.dataKey === "realized")?.value as number | undefined;
+  const unrealized = payload.find((p: any) => p.dataKey === "unrealized")?.value as number | undefined;
+  return (
+    <div style={TOOLTIP_STYLE} className="px-3 py-2">
+      <p style={{ color: "var(--accent-blue)", marginBottom: 4, fontSize: 12 }}>{label}</p>
+      {realized !== undefined && realized !== 0 && (
+        <p style={{ color: realized >= 0 ? GREEN : RED, fontSize: 13 }}>
+          Realized: {formatUsd(String(realized))}
+        </p>
+      )}
+      {unrealized !== undefined && unrealized !== 0 && (
+        <p style={{ color: unrealized >= 0 ? GREEN : RED, fontSize: 13, opacity: 0.7 }}>
+          Unrealized: {formatUsd(String(unrealized))}
+        </p>
+      )}
+      {(realized === 0 || realized === undefined) && (unrealized === 0 || unrealized === undefined) && (
+        <p style={{ color: "var(--text-secondary)", fontSize: 13 }}>No activity</p>
+      )}
+    </div>
+  );
+}
 
-  const pnlValues = data.map((d) => d.pnl);
-  const maxPnl = Math.max(...pnlValues, 0);
-  const minPnl = Math.min(...pnlValues, 0);
-  const range = maxPnl - minPnl;
-  const zeroOffset = range > 0 ? maxPnl / range : 0.5;
+export default memo(function PnlChart({ bars, timeframe, onTimeframeChange }: Props) {
+  const data = bars.map((b) => ({
+    date: formatDateLabel(b.date, timeframe),
+    realized: parseFloat(b.realized),
+    unrealized: b.unrealized != null ? parseFloat(b.unrealized) : 0,
+    hasUnrealized: b.unrealized != null,
+  }));
 
   return (
     <motion.div
@@ -91,24 +116,11 @@ export default memo(function PnlChart({ points, timeframe, onTimeframeChange }: 
         <p className="text-[var(--text-secondary)] text-center py-16 text-sm">No trades in this period</p>
       ) : (
         <ResponsiveContainer width="100%" height={250}>
-          <AreaChart
+          <BarChart
             data={data}
             margin={{ left: 10, right: 10, top: 10, bottom: 0 }}
+            stackOffset="sign"
           >
-            <defs>
-              <linearGradient id="pnlFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset={0} stopColor="#00ff88" stopOpacity={0.25} />
-                <stop offset={zeroOffset} stopColor="#00ff88" stopOpacity={0.03} />
-                <stop offset={zeroOffset} stopColor="#ff3366" stopOpacity={0.03} />
-                <stop offset={1} stopColor="#ff3366" stopOpacity={0.25} />
-              </linearGradient>
-              <linearGradient id="pnlStroke" x1="0" y1="0" x2="0" y2="1">
-                <stop offset={0} stopColor="#00ff88" />
-                <stop offset={zeroOffset} stopColor="#00ff88" />
-                <stop offset={zeroOffset} stopColor="#ff3366" />
-                <stop offset={1} stopColor="#ff3366" />
-              </linearGradient>
-            </defs>
             <CartesianGrid
               strokeDasharray="3 3"
               stroke="rgba(59, 130, 246, 0.06)"
@@ -126,21 +138,25 @@ export default memo(function PnlChart({ points, timeframe, onTimeframeChange }: 
               axisLine={false}
               tickLine={false}
             />
-            <Tooltip
-              contentStyle={TOOLTIP_STYLE}
-              labelStyle={{ color: "var(--accent-blue)" }}
-              formatter={(value: number | undefined) => [formatUsd(String(value ?? 0)), "P&L"]}
-            />
+            <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(59, 130, 246, 0.05)" }} />
             <ReferenceLine y={0} stroke="rgba(100, 116, 139, 0.3)" />
-            <Area
-              type="monotone"
-              dataKey="pnl"
-              stroke="url(#pnlStroke)"
-              strokeWidth={2}
-              fill="url(#pnlFill)"
-              animationDuration={800}
-            />
-          </AreaChart>
+            <Bar dataKey="realized" stackId="pnl" animationDuration={800} radius={[2, 2, 0, 0]}>
+              {data.map((d, i) => (
+                <Cell key={i} fill={d.realized >= 0 ? GREEN : RED} fillOpacity={0.85} />
+              ))}
+            </Bar>
+            <Bar dataKey="unrealized" stackId="pnl" animationDuration={800} radius={[2, 2, 0, 0]}>
+              {data.map((d, i) => (
+                <Cell
+                  key={i}
+                  fill={d.unrealized >= 0 ? GREEN : RED}
+                  fillOpacity={d.hasUnrealized ? 0.35 : 0}
+                  strokeDasharray={d.hasUnrealized ? "4 2" : undefined}
+                  stroke={d.hasUnrealized ? (d.unrealized >= 0 ? GREEN : RED) : "none"}
+                />
+              ))}
+            </Bar>
+          </BarChart>
         </ResponsiveContainer>
       )}
     </motion.div>

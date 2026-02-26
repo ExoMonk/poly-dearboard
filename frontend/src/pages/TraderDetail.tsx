@@ -287,7 +287,7 @@ export default function TraderDetail() {
       {/* PnL Chart */}
       {pnlChart && (
         <PnlChart
-          points={pnlChart.points}
+          bars={pnlChart.bars}
           timeframe={pnlTimeframe}
           onTimeframeChange={setPnlTimeframe}
         />
