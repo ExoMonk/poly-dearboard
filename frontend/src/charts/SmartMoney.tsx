@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { motion, AnimatePresence } from "motion/react";
+import { motion } from "motion/react";
 import { Link } from "react-router-dom";
 import { fetchSmartMoney } from "../api";
 import { formatUsd } from "../lib/format";
