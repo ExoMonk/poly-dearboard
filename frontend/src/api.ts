@@ -77,7 +77,6 @@ export async function fetchLeaderboard(params: {
   limit?: number;
   offset?: number;
   timeframe?: Timeframe;
-  categories?: string[];
 }): Promise<LeaderboardResponse> {
   const sp = new URLSearchParams();
   if (params.sort) sp.set("sort", params.sort);
@@ -85,7 +84,6 @@ export async function fetchLeaderboard(params: {
   if (params.limit) sp.set("limit", String(params.limit));
   if (params.offset !== undefined) sp.set("offset", String(params.offset));
   if (params.timeframe && params.timeframe !== "all") sp.set("timeframe", params.timeframe);
-  if (params.categories?.length) sp.set("categories", params.categories.join(","));
   const res = await authFetch(`${BASE}/leaderboard?${sp}`);
   if (!res.ok) throw new Error(`Leaderboard fetch failed: ${res.status}`);
   return res.json();

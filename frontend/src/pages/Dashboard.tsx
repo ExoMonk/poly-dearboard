@@ -47,13 +47,21 @@ export default function Dashboard() {
   const prevSnapshotRef = useRef<Record<string, { rank: number; realizedPnl: number; volume: number; trades: number }>>({});
   const [categoryFilters, setCategoryFilters] = useState<Set<DiscoveryCategory>>(new Set());
 
-  const categories = useMemo(() => [...categoryFilters], [categoryFilters]);
-
   const { data, isLoading, error } = useQuery({
-    queryKey: ["leaderboard", sort, order, offset, timeframe, categories],
-    queryFn: () => fetchLeaderboard({ sort, order, limit: PAGE_SIZE, offset, timeframe, categories: categories.length ? categories : undefined }),
+    queryKey: ["leaderboard", sort, order, offset, timeframe],
+    queryFn: () => fetchLeaderboard({ sort, order, limit: PAGE_SIZE, offset, timeframe }),
     placeholderData: keepPreviousData,
   });
+
+  // Client-side category filtering on the pre-fetched data (server returns 3× page size)
+  const filteredTraders = useMemo(() => {
+    if (!data) return [];
+    if (categoryFilters.size === 0) return data.traders.slice(0, PAGE_SIZE);
+    return data.traders.filter((t) => {
+      const r = data.readiness?.[t.address.toLowerCase()];
+      return r?.categories.some((c) => categoryFilters.has(c));
+    }).slice(0, PAGE_SIZE);
+  }, [data, categoryFilters]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowTs(Date.now()), 1000);
@@ -119,7 +127,6 @@ export default function Dashboard() {
       else next.add(cat);
       return next;
     });
-    setOffset(0);
   }, []);
 
   const deltaClass = (key: string): string => {
@@ -168,7 +175,11 @@ export default function Dashboard() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-sm text-[var(--text-secondary)] font-mono">{data.total.toLocaleString()} traders</span>
+          <span className="text-sm text-[var(--text-secondary)] font-mono">
+            {categoryFilters.size > 0
+              ? `${filteredTraders.length} of ${data.total.toLocaleString()} traders`
+              : `${data.total.toLocaleString()} traders`}
+          </span>
           <span
             className={`text-xs px-2 py-1 rounded-full ${
               freshness === "Updated <10s"
@@ -195,7 +206,7 @@ export default function Dashboard() {
         ))}
         {categoryFilters.size > 0 && (
           <button
-            onClick={() => { setCategoryFilters(new Set()); setOffset(0); }}
+            onClick={() => setCategoryFilters(new Set())}
             className="text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] px-2 py-0.5 transition-colors"
           >
             Clear
@@ -224,7 +235,7 @@ export default function Dashboard() {
               </tr>
             </thead>
             <tbody>
-              {data.traders.map((t, i) => {
+              {filteredTraders.map((t, i) => {
                 const rank = offset + i + 1;
                 const pnl = parseFloat(t.realized_pnl);
                 const addrKey = t.address.toLowerCase();
