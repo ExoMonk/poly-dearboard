@@ -19,7 +19,7 @@ export function useCommandRegistry() {
   const { data: sessions } = useSessions();
   const updateSession = useUpdateSession();
   const { logs } = useTerminalState();
-  const { toggle, setHeight, setActiveTab, clearLogs } = useTerminalDispatch();
+  const { toggle, setHeight, setActiveTab, clearLogs, detachTab, attachTab } = useTerminalDispatch();
 
   const staticCommands = useMemo<PaletteCommand[]>(() => [
     {
@@ -65,6 +65,58 @@ export function useCommandRegistry() {
         setHeight("half");
         setActiveTab("orders");
       },
+    },
+    {
+      id: "tab-feed",
+      label: "Switch to LiveFeed tab",
+      section: "Terminal",
+      shortcut: `${ALT}5`,
+      keywords: ["feed", "live", "trades", "tab"],
+      action: () => {
+        setHeight("half");
+        setActiveTab("feed");
+      },
+    },
+    {
+      id: "tab-alerts",
+      label: "Switch to Alerts tab",
+      section: "Terminal",
+      shortcut: `${ALT}6`,
+      keywords: ["alerts", "whale", "tab"],
+      action: () => {
+        setHeight("half");
+        setActiveTab("alerts");
+      },
+    },
+    {
+      id: "detach-feed",
+      label: "Detach LiveFeed panel",
+      section: "Terminal",
+      shortcut: `${ALT}Shift+5`,
+      keywords: ["detach", "feed", "float"],
+      action: () => detachTab("feed"),
+    },
+    {
+      id: "detach-alerts",
+      label: "Detach Alerts panel",
+      section: "Terminal",
+      shortcut: `${ALT}Shift+6`,
+      keywords: ["detach", "alerts", "float"],
+      action: () => detachTab("alerts"),
+    },
+    {
+      id: "attach-feed",
+      label: "Re-attach LiveFeed panel",
+      section: "Terminal",
+      keywords: ["attach", "feed", "dock"],
+      action: () => attachTab("feed"),
+    },
+    {
+      id: "attach-alerts",
+      label: "Re-attach Alerts panel",
+      section: "Terminal",
+      keywords: ["attach", "alerts", "dock"],
+      action: () => attachTab("alerts"),
     },
     {
       id: "terminal-toggle",
@@ -132,7 +184,7 @@ export function useCommandRegistry() {
       keywords: ["session", "copytrade", "start"],
       action: () => requestOpenCreateSession(),
     },
-  ], [clearLogs, navigate, setActiveTab, setHeight, toggle]);
+  ], [attachTab, clearLogs, detachTab, navigate, setActiveTab, setHeight, toggle]);
 
   const sessionCommands = useMemo<PaletteCommand[]>(() => {
     if (!sessions?.length) return [];

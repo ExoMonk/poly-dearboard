@@ -486,7 +486,9 @@ export interface LogEntry {
   meta?: Record<string, string>;
 }
 
-export type TerminalTab = "wallet" | "sessions" | "logs" | "orders";
+export type TerminalTab = "wallet" | "sessions" | "logs" | "orders" | "feed" | "alerts";
+
+export type LiveFeedMode = "signals" | "public";
 export type TerminalHeight = "collapsed" | "half" | "full";
 export type WalletStatus = "none" | "setup" | "funded" | "active";
 
@@ -503,13 +505,15 @@ export interface PaletteCommand {
 
 // Quick-action prefill contract (spec 25)
 export interface CreateSessionPrefill {
-  sourceSurface: "alerts" | "activity" | "market_live_feed";
-  sourceKind:
+  sourceSurface: "alerts" | "activity" | "market_live_feed" | "feed";
+  sourceKind?:
     | "whale_trade"
     | "resolution"
     | "failed_settlement"
     | "hot_market"
-    | "market_trade";
+    | "market_trade"
+    | "signal_trade"
+    | "public_trade";
   traderAddress?: string;
   tokenId?: string;
   question?: string;

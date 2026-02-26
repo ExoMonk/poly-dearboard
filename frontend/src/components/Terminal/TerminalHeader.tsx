@@ -14,7 +14,7 @@ const WALLET_DOT_COLORS: Record<WalletStatus, string> = {
 
 export function TerminalHeader() {
   const { height, walletStatus, activeSessions, unread } = useTerminalState();
-  const { toggle, setHeight, openLogsAndJumpToLatest } = useTerminalDispatch();
+  const { toggle, setHeight, setActiveTab, openLogsAndJumpToLatest } = useTerminalDispatch();
   const isMac = /Mac|iPhone|iPad/.test(navigator.userAgent);
   const commandHintLabel = isMac ? "⌘K" : "Ctrl+K";
   const [showCommandHint, setShowCommandHint] = useState(false);
@@ -91,8 +91,8 @@ export function TerminalHeader() {
           {unread.alert > 0 && (
             <button
               className="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-500/20 text-yellow-200 border border-yellow-500/30 font-mono"
-              onClick={() => openLogsAndJumpToLatest("alert")}
-              title="Open logs and jump to latest alerts"
+              onClick={() => { setHeight("half"); setActiveTab("alerts"); }}
+              title="Open alerts tab"
             >
               ALT {formatUnread(unread.alert)}
             </button>

@@ -90,6 +90,25 @@ input[type="number"] {
     box-shadow: 0 0 20px rgba(59, 130, 246, 0.06), 0 0 40px rgba(249, 115, 22, 0.03);
   }
 
+  /* Detachable floating panel */
+  .detached-panel {
+    background: rgba(10, 10, 14, 0.75);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--border-glow);
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 1px rgba(255, 255, 255, 0.1);
+  }
+  .detached-panel-header {
+    cursor: grab;
+    background: rgba(10, 10, 14, 0.9);
+    border-bottom: 1px solid var(--border-glow);
+    border-radius: 12px 12px 0 0;
+  }
+  .detached-panel-header:active {
+    cursor: grabbing;
+  }
+
   /* Subtle glow text */
   .glow-green {
     color: var(--neon-green);

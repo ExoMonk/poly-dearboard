@@ -10,9 +10,10 @@ const JWT_KEY = "pd_jwt";
 interface Params {
   listId: string | null;
   topN?: number;
+  enabled?: boolean;
 }
 
-export default function useSignalFeed({ listId, topN }: Params) {
+export default function useSignalFeed({ listId, topN, enabled = true }: Params) {
   const [trades, setTrades] = useState<SignalTrade[]>([]);
   const [alerts, setAlerts] = useState<ConvergenceAlert[]>([]);
   const [connected, setConnected] = useState(false);
@@ -20,8 +21,10 @@ export default function useSignalFeed({ listId, topN }: Params) {
   const [lastEventAt, setLastEventAt] = useState<number | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const retryRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const connect = useCallback(() => {
+    if (!enabled) return;
     const token = localStorage.getItem(JWT_KEY);
     if (!token) return;
     // Need either a list or top_n
@@ -71,29 +74,43 @@ export default function useSignalFeed({ listId, topN }: Params) {
     ws.onclose = () => {
       setConnected(false);
       wsRef.current = null;
+      if (!enabled) return;
       const delay = Math.min(
         RECONNECT_BASE_MS * Math.pow(2, retryRef.current),
         RECONNECT_MAX_MS,
       );
       retryRef.current++;
-      setTimeout(connect, delay);
+      reconnectTimerRef.current = setTimeout(connect, delay);
     };
 
     ws.onerror = () => {
       ws.close();
     };
-  }, [listId, topN]);
+  }, [listId, topN, enabled]);
 
   useEffect(() => {
+    if (!enabled) {
+      wsRef.current?.close();
+      wsRef.current = null;
+      clearTimeout(reconnectTimerRef.current);
+      setConnected(false);
+      setTrades([]);
+      setAlerts([]);
+      setIsLagging(false);
+      setLastEventAt(null);
+      retryRef.current = 0;
+      return;
+    }
     setTrades([]);
     setAlerts([]);
     setIsLagging(false);
     setLastEventAt(null);
     connect();
     return () => {
+      clearTimeout(reconnectTimerRef.current);
       wsRef.current?.close();
     };
-  }, [connect]);
+  }, [connect, enabled]);
 
   return { trades, alerts, connected, isLagging, lastEventAt };
 }

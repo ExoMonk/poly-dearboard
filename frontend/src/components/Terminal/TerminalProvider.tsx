@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import type {
+  LiveFeedMode,
   LogEntry,
   LogSource,
   TerminalHeight,
@@ -37,6 +38,10 @@ interface TerminalState {
   walletBalance: string | null;
   unread: TerminalUnread;
   logsJumpNonce: number;
+  detachedTabs: TerminalTab[];
+  minimizedPanels: TerminalTab[];
+  liveFeedMode: LiveFeedMode;
+  liveFeedListId: string | null;
 }
 
 // --- Actions ---
@@ -53,7 +58,13 @@ type TerminalAction =
   | { type: "TRIGGER_LOGS_JUMP" }
   | { type: "SET_WALLET_STATUS"; status: WalletStatus }
   | { type: "SET_ACTIVE_SESSIONS"; count: number }
-  | { type: "SET_WALLET_BALANCE"; balance: string | null };
+  | { type: "SET_WALLET_BALANCE"; balance: string | null }
+  | { type: "DETACH_TAB"; tab: TerminalTab }
+  | { type: "ATTACH_TAB"; tab: TerminalTab }
+  | { type: "MINIMIZE_PANEL"; tab: TerminalTab }
+  | { type: "RESTORE_PANEL"; tab: TerminalTab }
+  | { type: "SET_LIVE_FEED_MODE"; mode: LiveFeedMode }
+  | { type: "SET_LIVE_FEED_LIST_ID"; listId: string | null };
 
 function reducer(state: TerminalState, action: TerminalAction): TerminalState {
   switch (action.type) {
@@ -116,30 +127,71 @@ function reducer(state: TerminalState, action: TerminalAction): TerminalState {
       return { ...state, activeSessions: action.count };
     case "SET_WALLET_BALANCE":
       return { ...state, walletBalance: action.balance };
+    case "DETACH_TAB":
+      if (state.detachedTabs.includes(action.tab)) return state;
+      return { ...state, detachedTabs: [...state.detachedTabs, action.tab] };
+    case "ATTACH_TAB":
+      if (!state.detachedTabs.includes(action.tab)) return state;
+      return {
+        ...state,
+        detachedTabs: state.detachedTabs.filter((t) => t !== action.tab),
+        minimizedPanels: state.minimizedPanels.filter((t) => t !== action.tab),
+      };
+    case "MINIMIZE_PANEL":
+      if (state.minimizedPanels.includes(action.tab)) return state;
+      return { ...state, minimizedPanels: [...state.minimizedPanels, action.tab] };
+    case "RESTORE_PANEL":
+      if (!state.minimizedPanels.includes(action.tab)) return state;
+      return { ...state, minimizedPanels: state.minimizedPanels.filter((t) => t !== action.tab) };
+    case "SET_LIVE_FEED_MODE":
+      return { ...state, liveFeedMode: action.mode };
+    case "SET_LIVE_FEED_LIST_ID":
+      return { ...state, liveFeedListId: action.listId };
   }
 }
 
 // --- Persisted initial state ---
 
-function loadPersistedState(): Pick<TerminalState, "height" | "activeTab"> {
+interface PersistedTerminalState {
+  height: TerminalHeight;
+  activeTab: TerminalTab;
+  detachedTabs: TerminalTab[];
+  minimizedPanels: TerminalTab[];
+  liveFeedMode: LiveFeedMode;
+  liveFeedListId: string | null;
+}
+
+function loadPersistedState(): PersistedTerminalState {
+  const defaults: PersistedTerminalState = {
+    height: "collapsed",
+    activeTab: "logs",
+    detachedTabs: [],
+    minimizedPanels: [],
+    liveFeedMode: "public",
+    liveFeedListId: null,
+  };
   try {
     const raw = localStorage.getItem(LS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       return {
-        height: parsed.height ?? "collapsed",
-        activeTab: parsed.activeTab ?? "logs",
+        height: parsed.height ?? defaults.height,
+        activeTab: parsed.activeTab ?? defaults.activeTab,
+        detachedTabs: Array.isArray(parsed.detachedTabs) ? parsed.detachedTabs : defaults.detachedTabs,
+        minimizedPanels: Array.isArray(parsed.minimizedPanels) ? parsed.minimizedPanels : defaults.minimizedPanels,
+        liveFeedMode: parsed.liveFeedMode === "signals" ? "signals" : defaults.liveFeedMode,
+        liveFeedListId: parsed.liveFeedListId ?? defaults.liveFeedListId,
       };
     }
   } catch {
     // ignore
   }
-  return { height: "collapsed", activeTab: "logs" };
+  return defaults;
 }
 
-function persistState(height: TerminalHeight, activeTab: TerminalTab) {
+function persistState(s: Pick<TerminalState, "height" | "activeTab" | "detachedTabs" | "minimizedPanels" | "liveFeedMode" | "liveFeedListId">) {
   try {
-    localStorage.setItem(LS_KEY, JSON.stringify({ height, activeTab }));
+    localStorage.setItem(LS_KEY, JSON.stringify(s));
   } catch {
     // ignore
   }
@@ -185,6 +237,12 @@ interface TerminalDispatchContextValue {
   setWalletStatus: (status: WalletStatus) => void;
   setActiveSessions: (count: number) => void;
   setWalletBalance: (balance: string | null) => void;
+  detachTab: (tab: TerminalTab) => void;
+  attachTab: (tab: TerminalTab) => void;
+  minimizePanel: (tab: TerminalTab) => void;
+  restorePanel: (tab: TerminalTab) => void;
+  setLiveFeedMode: (mode: LiveFeedMode) => void;
+  setLiveFeedListId: (listId: string | null) => void;
 }
 
 const TerminalStateContext = createContext<TerminalStateContextValue | null>(null);
@@ -206,12 +264,23 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
     walletBalance: null,
     unread: { copytrade: 0, alert: 0 },
     logsJumpNonce: 0,
+    detachedTabs: persisted.detachedTabs,
+    minimizedPanels: persisted.minimizedPanels,
+    liveFeedMode: persisted.liveFeedMode,
+    liveFeedListId: persisted.liveFeedListId,
   });
 
-  // Persist height + tab changes
+  // Persist state changes
   useEffect(() => {
-    persistState(state.height, state.activeTab);
-  }, [state.height, state.activeTab]);
+    persistState({
+      height: state.height,
+      activeTab: state.activeTab,
+      detachedTabs: state.detachedTabs,
+      minimizedPanels: state.minimizedPanels,
+      liveFeedMode: state.liveFeedMode,
+      liveFeedListId: state.liveFeedListId,
+    });
+  }, [state.height, state.activeTab, state.detachedTabs, state.minimizedPanels, state.liveFeedMode, state.liveFeedListId]);
 
   // Persist logs (debounced 2s)
   useEffect(() => {
@@ -245,13 +314,27 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      // Alt+1..4 tab shortcuts (opens terminal if collapsed)
+      // Alt+1..6 tab shortcuts (opens terminal if collapsed)
+      // Alt+Shift+5/6 toggle detach for feed/alerts
       if (e.altKey && !e.metaKey && !e.ctrlKey) {
+        if (e.shiftKey && (e.key === "5" || e.key === "%")) {
+          e.preventDefault();
+          dispatch(state.detachedTabs.includes("feed") ? { type: "ATTACH_TAB", tab: "feed" } : { type: "DETACH_TAB", tab: "feed" });
+          return;
+        }
+        if (e.shiftKey && (e.key === "6" || e.key === "^")) {
+          e.preventDefault();
+          dispatch(state.detachedTabs.includes("alerts") ? { type: "ATTACH_TAB", tab: "alerts" } : { type: "DETACH_TAB", tab: "alerts" });
+          return;
+        }
+
         const tabByKey: Record<string, TerminalTab> = {
           "1": "wallet",
           "2": "sessions",
           "3": "logs",
           "4": "orders",
+          "5": "feed",
+          "6": "alerts",
         };
         const tab = tabByKey[e.key];
         if (tab) {
@@ -284,7 +367,7 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [state.isOpen]);
+  }, [state.isOpen, state.detachedTabs]);
 
   const dispatchers = useMemo<TerminalDispatchContextValue>(
     () => ({
@@ -314,6 +397,12 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
       setWalletStatus: (status) => dispatch({ type: "SET_WALLET_STATUS", status }),
       setActiveSessions: (count) => dispatch({ type: "SET_ACTIVE_SESSIONS", count }),
       setWalletBalance: (balance) => dispatch({ type: "SET_WALLET_BALANCE", balance }),
+      detachTab: (tab) => dispatch({ type: "DETACH_TAB", tab }),
+      attachTab: (tab) => dispatch({ type: "ATTACH_TAB", tab }),
+      minimizePanel: (tab) => dispatch({ type: "MINIMIZE_PANEL", tab }),
+      restorePanel: (tab) => dispatch({ type: "RESTORE_PANEL", tab }),
+      setLiveFeedMode: (mode) => dispatch({ type: "SET_LIVE_FEED_MODE", mode }),
+      setLiveFeedListId: (listId) => dispatch({ type: "SET_LIVE_FEED_LIST_ID", listId }),
     }),
     [],
   );
