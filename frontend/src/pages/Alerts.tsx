@@ -1,10 +1,14 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import useAlerts from "../hooks/useAlerts";
+import { useAuth } from "../context/AuthContext";
 import type { Alert } from "../types";
 import { formatUsd, formatNumber, shortenAddress, polygonscanTx, polygonscanAddress, timeAgo } from "../lib/format";
 import { alertCardVariants, tapScale } from "../lib/motion";
+import EventActions, { type ActionDef } from "../components/EventActions";
+import AddToListButton from "../components/AddToListButton";
+import { requestOpenCreateSession } from "../components/Terminal/CreateSessionModal";
 
 type AlertFilter = "all" | "whale" | "resolution" | "failed";
 
@@ -141,6 +145,29 @@ function AlertCard({ alert }: { alert: Alert }) {
 
 function WhaleTradeCard({ alert }: { alert: Extract<Alert, { kind: "WhaleTrade" }> }) {
   const isBuy = alert.side === "buy";
+  const navigate = useNavigate();
+  const { isAuthenticated, signIn } = useAuth();
+
+  const actions: ActionDef[] = [
+    { kind: "add_trader", onClick: () => {}, render: <AddToListButton address={alert.trader} /> },
+    {
+      kind: "copy_trade",
+      onClick: () => {
+        if (!isAuthenticated) { signIn(); return; }
+        requestOpenCreateSession({
+          sourceSurface: "alerts",
+          sourceKind: "whale_trade",
+          traderAddress: alert.trader,
+          tokenId: alert.asset_id,
+          question: alert.question,
+          outcome: alert.outcome,
+          defaults: { simulationMode: "simulate" },
+        });
+      },
+    },
+    { kind: "open_trader", onClick: () => navigate(`/trader/${alert.trader}`) },
+    { kind: "open_market", onClick: () => navigate(`/market/${encodeURIComponent(alert.asset_id)}`) },
+  ];
 
   return (
     <div className={`glass p-5 transition-all duration-300 hover:shadow-lg hover:shadow-[var(--accent-blue)]/5 group ${
@@ -206,6 +233,9 @@ function WhaleTradeCard({ alert }: { alert: Extract<Alert, { kind: "WhaleTrade" 
           )}
         </div>
       </div>
+      <div className="flex items-center justify-end gap-1 mt-3 pt-2 border-t border-white/[0.04]">
+        <EventActions actions={actions} />
+      </div>
     </div>
   );
 }
@@ -215,6 +245,13 @@ function WhaleTradeCard({ alert }: { alert: Extract<Alert, { kind: "WhaleTrade" 
 // ---------------------------------------------------------------------------
 
 function MarketResolutionCard({ alert }: { alert: Extract<Alert, { kind: "MarketResolution" }> }) {
+  const navigate = useNavigate();
+
+  const actions: ActionDef[] = [];
+  if (alert.token_id) {
+    actions.push({ kind: "open_market", onClick: () => navigate(`/market/${alert.token_id}`) });
+  }
+
   // Default to Yes/No for binary markets when backend cache missed the outcome names
   const effectiveOutcomes = alert.outcomes.length > 0
     ? alert.outcomes
@@ -300,6 +337,11 @@ function MarketResolutionCard({ alert }: { alert: Extract<Alert, { kind: "Market
           )}
         </div>
       </div>
+      {actions.length > 0 && (
+        <div className="flex items-center justify-end gap-1 mt-3 pt-2 border-t border-white/[0.04]">
+          <EventActions actions={actions} />
+        </div>
+      )}
     </div>
   );
 }
@@ -310,6 +352,14 @@ function MarketResolutionCard({ alert }: { alert: Extract<Alert, { kind: "Market
 
 function FailedSettlementCard({ alert }: { alert: Extract<Alert, { kind: "FailedSettlement" }> }) {
   const contractLabel = alert.to_contract === "neg_risk" ? "NegRisk Exchange" : "CTF Exchange";
+  const navigate = useNavigate();
+
+  const actions: ActionDef[] = [
+    { kind: "open_tx", onClick: () => window.open(polygonscanTx(alert.tx_hash), "_blank") },
+  ];
+  if (alert.from_address) {
+    actions.push({ kind: "open_trader", onClick: () => navigate(`/trader/${alert.from_address}`) });
+  }
 
   return (
     <div className={`glass p-5 border-l-4 border-[var(--neon-red)] transition-all duration-300 hover:shadow-lg hover:shadow-[var(--neon-red)]/10`}>
@@ -357,6 +407,9 @@ function FailedSettlementCard({ alert }: { alert: Extract<Alert, { kind: "Failed
             block {formatNumber(alert.block_number)}
           </div>
         </div>
+      </div>
+      <div className="flex items-center justify-end gap-1 mt-3 pt-2 border-t border-white/[0.04]">
+        <EventActions actions={actions} />
       </div>
     </div>
   );

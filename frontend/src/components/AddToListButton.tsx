@@ -51,10 +51,11 @@ export default function AddToListButton({ address }: Props) {
           e.stopPropagation();
           setOpen(!open);
         }}
-        className="w-7 h-7 flex items-center justify-center rounded-md text-[var(--text-secondary)] hover:text-[var(--accent-blue)] hover:bg-[var(--accent-blue)]/10 transition-all cursor-pointer text-sm font-bold"
+        className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[var(--text-secondary)] hover:text-[var(--accent-blue)] hover:bg-[var(--accent-blue)]/10 transition-all cursor-pointer text-[10px] font-medium whitespace-nowrap"
         title="Add to list"
       >
-        +
+        <span className="text-sm font-bold leading-none">+</span>
+        <span className="hidden sm:inline">Add trader</span>
       </motion.button>
       <AnimatePresence>
         {open && (

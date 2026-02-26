@@ -87,7 +87,7 @@ export default function SignalFeed() {
             {!hasActiveSession && (
               <button
                 className="text-xs font-semibold px-3 py-1.5 rounded bg-[var(--neon-green)]/10 text-[var(--neon-green)] border border-[var(--neon-green)]/30 hover:bg-[var(--neon-green)]/20 transition-colors"
-                onClick={requestOpenCreateSession}
+                onClick={() => requestOpenCreateSession()}
               >
                 Start Copy-Trade
               </button>

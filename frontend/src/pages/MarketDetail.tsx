@@ -18,6 +18,7 @@ import { staggerContainer, statCardVariants } from "../lib/motion";
 import {
   freshnessLabel,
 } from "../lib/streamControls";
+import AddToListButton from "../components/AddToListButton";
 
 const MAX_RENDER_TRADES = 200;
 
@@ -313,6 +314,7 @@ export default function MarketDetail() {
                     <th className="px-4 py-3 text-right">USDC</th>
                     <th className="px-4 py-3 text-left hidden md:table-cell">Trader</th>
                     <th className="px-4 py-3 text-right hidden lg:table-cell">Tx</th>
+                    <th className="px-4 py-3 text-right w-20"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -382,6 +384,9 @@ export default function MarketDetail() {
                         >
                           {shortenAddress(t.tx_hash)}
                         </a>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <AddToListButton address={t.trader} />
                       </td>
                     </motion.tr>
                   ))}

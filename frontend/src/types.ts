@@ -501,6 +501,27 @@ export interface PaletteCommand {
   available?: () => boolean;
 }
 
+// Quick-action prefill contract (spec 25)
+export interface CreateSessionPrefill {
+  sourceSurface: "alerts" | "activity" | "market_live_feed";
+  sourceKind:
+    | "whale_trade"
+    | "resolution"
+    | "failed_settlement"
+    | "hot_market"
+    | "market_trade";
+  traderAddress?: string;
+  tokenId?: string;
+  question?: string;
+  outcome?: string;
+  defaults?: {
+    simulationMode?: "simulate" | "live";
+    maxPositionUsd?: number;
+    copySizePercent?: number;
+    minSourceTradeUsd?: number;
+  };
+}
+
 // Copy-Trade Engine (spec 15)
 export type SessionStatus = "running" | "paused" | "stopped";
 export type CopyOrderType = "FOK" | "GTC";

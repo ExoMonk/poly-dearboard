@@ -4,13 +4,13 @@ import { useCreateSession } from "../../hooks/useCopyTrade";
 import { useTraderLists } from "../../hooks/useTraderLists";
 import { useWallets } from "../../hooks/useWallet";
 import { useTerminal } from "./TerminalProvider";
-import type { CopyOrderType, CreateSessionRequest } from "../../types";
+import type { CopyOrderType, CreateSessionRequest, CreateSessionPrefill } from "../../types";
 
 /* ── event bus ─────────────────────────────────────────────── */
 const OPEN_EVENT = "session:open-create-modal";
 
-export function requestOpenCreateSession() {
-  window.dispatchEvent(new Event(OPEN_EVENT));
+export function requestOpenCreateSession(prefill?: CreateSessionPrefill) {
+  window.dispatchEvent(new CustomEvent(OPEN_EVENT, { detail: prefill }));
 }
 
 /* ── pill toggle ───────────────────────────────────────────── */
@@ -107,35 +107,50 @@ export function CreateSessionModal() {
   const [minSourcePrice, setMinSourcePrice] = useState(5);
 
   const [error, setError] = useState("");
+  const prefillRef = useRef<CreateSessionPrefill | null>(null);
 
   const liveWallets = (wallets ?? []).filter((w) => w.has_clob_credentials);
 
   /* ── open / close ───────────────────────────────────────── */
-  const openModal = useCallback(() => {
+  const openModal = useCallback((prefill?: CreateSessionPrefill) => {
+    prefillRef.current = prefill ?? null;
     setOpen(true);
-    // Pre-populate from backtest if available
-    try {
-      const raw = sessionStorage.getItem("backtest_config");
-      if (raw) {
-        const cfg = JSON.parse(raw);
-        if (cfg.capital) setCapital(cfg.capital);
-        if (cfg.copy_pct) setCopyPct(cfg.copy_pct * 100);
-        if (cfg.max_position_usdc) setMaxPosition(cfg.max_position_usdc);
-        if (cfg.max_slippage_bps) setMaxSlippage(cfg.max_slippage_bps);
-        if (cfg.list_id) { setSource("list"); setListId(cfg.list_id); }
-        if (cfg.top_n) { setSource("top_n"); setTopN(cfg.top_n); }
-      }
-    } catch { /* ignore */ }
+
+    // Apply prefill defaults (takes priority over backtest config)
+    if (prefill?.defaults) {
+      const d = prefill.defaults;
+      if (d.simulationMode) setSimulate(d.simulationMode === "simulate");
+      if (d.copySizePercent) setCopyPct(d.copySizePercent);
+      if (d.maxPositionUsd) setMaxPosition(d.maxPositionUsd);
+      if (d.minSourceTradeUsd) setMinSourceUsdc(d.minSourceTradeUsd);
+    }
+
+    // Fallback: backtest config from sessionStorage
+    if (!prefill) {
+      try {
+        const raw = sessionStorage.getItem("backtest_config");
+        if (raw) {
+          const cfg = JSON.parse(raw);
+          if (cfg.capital) setCapital(cfg.capital);
+          if (cfg.copy_pct) setCopyPct(cfg.copy_pct * 100);
+          if (cfg.max_position_usdc) setMaxPosition(cfg.max_position_usdc);
+          if (cfg.max_slippage_bps) setMaxSlippage(cfg.max_slippage_bps);
+          if (cfg.list_id) { setSource("list"); setListId(cfg.list_id); }
+          if (cfg.top_n) { setSource("top_n"); setTopN(cfg.top_n); }
+        }
+      } catch { /* ignore */ }
+    }
   }, []);
 
   const closeModal = useCallback(() => {
     setOpen(false);
     setError("");
     setShowLiveConfirm(false);
+    prefillRef.current = null;
   }, []);
 
   useEffect(() => {
-    const handler = () => openModal();
+    const handler = (e: Event) => openModal((e as CustomEvent).detail);
     window.addEventListener(OPEN_EVENT, handler);
     return () => window.removeEventListener(OPEN_EVENT, handler);
   }, [openModal]);
@@ -222,6 +237,12 @@ export function CreateSessionModal() {
                   <p className="text-xs text-[var(--text-secondary)] mt-0.5">
                     Configure a copy-trade {simulate ? "simulation" : "live session"}
                   </p>
+                  {prefillRef.current && (
+                    <p className="text-[10px] text-[var(--accent-orange)] mt-1 truncate max-w-[320px]">
+                      From {prefillRef.current.sourceSurface.replace(/_/g, " ")}
+                      {prefillRef.current.question ? `: ${prefillRef.current.question.slice(0, 50)}` : prefillRef.current.traderAddress ? `: ${prefillRef.current.traderAddress.slice(0, 10)}…` : ""}
+                    </p>
+                  )}
                 </div>
                 <button
                   onClick={closeModal}

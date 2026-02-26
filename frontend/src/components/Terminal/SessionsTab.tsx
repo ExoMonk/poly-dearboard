@@ -233,7 +233,7 @@ export function SessionsTab() {
         <div className="text-xs text-[var(--text-secondary)]">No sessions yet</div>
         <button
           className="px-4 py-2 text-xs font-semibold rounded-xl bg-[var(--accent-blue)]/15 text-[var(--accent-blue)] border border-[var(--accent-blue)]/20 hover:bg-[var(--accent-blue)]/25 transition-colors"
-          onClick={requestOpenCreateSession}
+          onClick={() => requestOpenCreateSession()}
         >
           New Session
         </button>
@@ -245,7 +245,7 @@ export function SessionsTab() {
     <div className="p-3 space-y-2 overflow-y-auto h-full">
       <button
         className="w-full py-1.5 text-xs font-semibold rounded-xl bg-[var(--accent-blue)]/15 text-[var(--accent-blue)] border border-[var(--accent-blue)]/20 hover:bg-[var(--accent-blue)]/25 transition-colors mb-1"
-        onClick={requestOpenCreateSession}
+        onClick={() => requestOpenCreateSession()}
       >
         New Session
       </button>
