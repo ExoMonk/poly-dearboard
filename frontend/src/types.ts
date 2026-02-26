@@ -131,6 +131,7 @@ export interface SmartMoneyMarket {
   token_id: string;
   question: string;
   outcome: string;
+  counter_outcome: string;
   smart_trader_count: number;
   long_count: number;
   short_count: number;

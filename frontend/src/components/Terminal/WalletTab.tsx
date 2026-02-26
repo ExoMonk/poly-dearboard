@@ -31,7 +31,7 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       onClick={handleCopy}
-      className="ml-2 px-1.5 py-0.5 text-[10px] rounded bg-white/5 hover:bg-white/10 text-[var(--text-muted)] transition-colors"
+      className="ml-2 px-1.5 py-0.5 text-[10px] rounded-lg bg-white/5 hover:bg-white/10 text-[var(--text-muted)] transition-colors"
     >
       {copied ? "Copied" : "Copy"}
     </button>
@@ -130,9 +130,6 @@ function BalanceSection({
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-[var(--text-muted)] font-mono text-[10px]">
-            {balance.pol_balance} POL
-          </span>
           {staleWarning && (
             <span className="text-yellow-400 text-[10px]" title={`Last checked ${staleSecs}s ago`}>
               stale
@@ -141,15 +138,40 @@ function BalanceSection({
         </div>
       </div>
 
-      {balance.needs_gas && (
-        <p className="mt-1 text-[10px] text-yellow-400">
-          Low POL — send ~0.01 POL for gas
-        </p>
+      {/* Safe proxy recovery — only shown if auto-deploy during CLOB derivation failed */}
+      {!balance.safe_deployed && (
+        <div className="flex items-center gap-3 mt-1.5 text-[11px]">
+          <span className="text-[var(--text-muted)]">Safe</span>
+          {deploying ? (
+            <span className="text-yellow-400">Deploying...</span>
+          ) : deployFailed ? (
+            <>
+              <span className="text-red-400">Deploy failed</span>
+              <button
+                onClick={handleEnableTrading}
+                className="px-2 py-0.5 text-[10px] font-semibold rounded-xl bg-[var(--accent-blue)]/15 text-[var(--accent-blue)] border border-[var(--accent-blue)]/20 hover:bg-[var(--accent-blue)]/25 transition-colors"
+              >
+                Retry
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="text-yellow-400">Not deployed</span>
+              <button
+                onClick={handleEnableTrading}
+                disabled={enableTradingMutation.isPending}
+                className="px-2 py-0.5 text-[10px] font-semibold rounded-xl bg-[var(--accent-blue)]/15 text-[var(--accent-blue)] border border-[var(--accent-blue)]/20 hover:bg-[var(--accent-blue)]/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {enableTradingMutation.isPending ? "Deploying..." : "Deploy Safe"}
+              </button>
+            </>
+          )}
+        </div>
       )}
 
-      {/* Approval status */}
+      {/* Step 2: Approvals */}
       <div className="flex items-center gap-3 mt-1.5 text-[11px]">
-        <span className="text-[var(--text-muted)]">Approvals</span>
+        <span className="text-[var(--text-muted)]">Step 2</span>
         <span className={balance.ctf_exchange_approved ? "text-green-400" : "text-red-400"}>
           CTF {balance.ctf_exchange_approved ? "\u2713" : "\u2717"}
         </span>
@@ -159,48 +181,20 @@ function BalanceSection({
         {!allApproved && (
           <button
             onClick={handleApprove}
-            disabled={approveMutation.isPending || balance.needs_gas}
-            className="px-1.5 py-0.5 text-[10px] rounded bg-[var(--accent-blue)] text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
+            disabled={approveMutation.isPending || !balance.safe_deployed}
+            className="px-2 py-0.5 text-[10px] font-semibold rounded-xl bg-[var(--accent-blue)]/15 text-[var(--accent-blue)] border border-[var(--accent-blue)]/20 hover:bg-[var(--accent-blue)]/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {approveMutation.isPending ? "Approving..." : "Approve All"}
           </button>
         )}
       </div>
 
-      {/* Safe proxy deployment status */}
-      {!balance.safe_deployed && (
-        <div className="flex items-center gap-3 mt-1.5 text-[11px]">
-          <span className="text-[var(--text-muted)]">Trading</span>
-          {deploying ? (
-            <span className="text-yellow-400">Deploying Safe...</span>
-          ) : deployFailed ? (
-            <>
-              <span className="text-red-400">Deploy failed</span>
-              <button
-                onClick={handleEnableTrading}
-                className="px-1.5 py-0.5 text-[10px] rounded bg-[var(--accent-blue)] text-white hover:opacity-90 transition-opacity"
-              >
-                Retry
-              </button>
-            </>
-          ) : (
-            <button
-              onClick={handleEnableTrading}
-              disabled={enableTradingMutation.isPending}
-              className="px-1.5 py-0.5 text-[10px] rounded bg-[var(--accent-blue)] text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
-            >
-              {enableTradingMutation.isPending ? "Enabling..." : "Enable Trading"}
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* Fund wallet toggle */}
+      {/* Step 4: Fund wallet */}
       <button
         onClick={() => setShowFunding(!showFunding)}
         className="mt-2 text-[11px] text-[var(--accent-blue)] hover:underline"
       >
-        {showFunding ? "Hide funding" : "Fund wallet"}
+        {showFunding ? "Hide funding" : `${allApproved ? "Step 3 — " : ""}Fund wallet`}
       </button>
 
       {showFunding && (
@@ -284,19 +278,19 @@ function NoWalletsView({
         <button
           onClick={onGenerate}
           disabled={isGenerating}
-          className="px-3 py-1.5 text-xs rounded bg-[var(--accent-blue)] text-white hover:opacity-90 transition-opacity disabled:opacity-50"
+          className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-[var(--accent-blue)]/15 text-[var(--accent-blue)] border border-[var(--accent-blue)]/20 hover:bg-[var(--accent-blue)]/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {isGenerating ? "Generating..." : "Generate New Wallet"}
         </button>
         <button
           onClick={onImport}
-          className="px-3 py-1.5 text-xs rounded border border-[var(--border-glow)] text-[var(--text-secondary)] hover:bg-white/5 transition-colors"
+          className="px-3 py-1.5 text-xs font-semibold rounded-xl border border-[var(--border-glow)] text-[var(--text-secondary)] hover:bg-white/5 transition-colors"
         >
           Import Existing
         </button>
       </div>
       <InfoNote>
-        A dedicated wallet is used for copy-trading. Fund it with a limited budget — only funded capital is at risk.
+        Create a dedicated wallet, then follow the steps on the card: Derive CLOB &rarr; Approve &rarr; Fund.
       </InfoNote>
     </div>
   );
@@ -341,7 +335,7 @@ function GenerateResultView({
 
       <button
         onClick={onContinue}
-        className="mt-2 px-4 py-1.5 text-xs rounded bg-[var(--accent-blue)] text-white hover:opacity-90 transition-opacity"
+        className="mt-2 px-4 py-1.5 text-xs font-semibold rounded-xl bg-[var(--accent-blue)]/15 text-[var(--accent-blue)] border border-[var(--accent-blue)]/20 hover:bg-[var(--accent-blue)]/25 transition-colors"
       >
         I've saved my key — Continue
       </button>
@@ -386,13 +380,13 @@ function ImportView({
         <button
           onClick={() => onSubmit(key)}
           disabled={isImporting || !key}
-          className="px-3 py-1.5 text-xs rounded bg-[var(--accent-blue)] text-white hover:opacity-90 transition-opacity disabled:opacity-50"
+          className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-[var(--accent-blue)]/15 text-[var(--accent-blue)] border border-[var(--accent-blue)]/20 hover:bg-[var(--accent-blue)]/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {isImporting ? "Importing..." : "Import"}
         </button>
         <button
           onClick={onCancel}
-          className="px-3 py-1.5 text-xs rounded border border-[var(--border-glow)] text-[var(--text-secondary)] hover:bg-white/5 transition-colors"
+          className="px-3 py-1.5 text-xs font-semibold rounded-xl border border-[var(--border-glow)] text-[var(--text-secondary)] hover:bg-white/5 transition-colors"
         >
           Cancel
         </button>
@@ -453,13 +447,18 @@ function WalletCard({
             <span className="text-green-400">API key derived</span>
           </div>
         ) : (
-          <button
-            onClick={() => onDerive(wallet.id)}
-            disabled={isDeriving}
-            className="mt-1 px-2 py-1 text-[11px] rounded bg-[var(--accent-blue)] text-white hover:opacity-90 transition-opacity disabled:opacity-50"
-          >
-            {isDeriving ? "Deriving..." : "Derive CLOB Credentials"}
-          </button>
+          <div className="mt-1 space-y-1">
+            <p className="text-[10px] text-[var(--text-muted)]">
+              Step 1 — Sign a message to generate your CLOB API key (no gas needed)
+            </p>
+            <button
+              onClick={() => onDerive(wallet.id)}
+              disabled={isDeriving}
+              className="px-2.5 py-1 text-[11px] font-semibold rounded-xl bg-[var(--accent-blue)]/15 text-[var(--accent-blue)] border border-[var(--accent-blue)]/20 hover:bg-[var(--accent-blue)]/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {isDeriving ? "Deriving..." : "Derive CLOB Credentials"}
+            </button>
+          </div>
         )}
       </div>
 
@@ -477,7 +476,7 @@ function WalletCard({
         <button
           onClick={() => onDelete(wallet.id)}
           disabled={isDeleting}
-          className="px-2 py-0.5 text-[10px] rounded border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+          className="px-2 py-0.5 text-[10px] font-semibold rounded-xl border border-red-500/20 text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {isDeleting ? "Deleting..." : "Delete"}
         </button>
@@ -518,7 +517,7 @@ function WalletListView({
         {wallets.length < MAX_WALLETS && (
           <button
             onClick={onAdd}
-            className="px-2 py-1 text-[11px] rounded bg-[var(--accent-blue)] text-white hover:opacity-90 transition-opacity"
+            className="px-2.5 py-1 text-[11px] font-semibold rounded-xl bg-[var(--accent-blue)]/15 text-[var(--accent-blue)] border border-[var(--accent-blue)]/20 hover:bg-[var(--accent-blue)]/25 transition-colors"
           >
             + Add Wallet
           </button>
@@ -564,19 +563,19 @@ function AddWalletView({
         <button
           onClick={onGenerate}
           disabled={isGenerating}
-          className="px-3 py-1.5 text-xs rounded bg-[var(--accent-blue)] text-white hover:opacity-90 transition-opacity disabled:opacity-50"
+          className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-[var(--accent-blue)]/15 text-[var(--accent-blue)] border border-[var(--accent-blue)]/20 hover:bg-[var(--accent-blue)]/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {isGenerating ? "Generating..." : "Generate New"}
         </button>
         <button
           onClick={onImport}
-          className="px-3 py-1.5 text-xs rounded border border-[var(--border-glow)] text-[var(--text-secondary)] hover:bg-white/5 transition-colors"
+          className="px-3 py-1.5 text-xs font-semibold rounded-xl border border-[var(--border-glow)] text-[var(--text-secondary)] hover:bg-white/5 transition-colors"
         >
           Import Existing
         </button>
         <button
           onClick={onCancel}
-          className="px-3 py-1.5 text-xs rounded border border-[var(--border-glow)] text-[var(--text-muted)] hover:bg-white/5 transition-colors"
+          className="px-3 py-1.5 text-xs font-semibold rounded-xl border border-[var(--border-glow)] text-[var(--text-muted)] hover:bg-white/5 transition-colors"
         >
           Cancel
         </button>

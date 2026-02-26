@@ -17,7 +17,7 @@ import { useOrderToast } from "../../hooks/useOrderToast";
 
 const HEIGHT_MAP = {
   collapsed: 40,
-  half: "40vh",
+  half: "50vh",
   full: "80vh",
 } as const;
 
@@ -93,7 +93,7 @@ export function TerminalShell() {
   // Set CSS custom property for main content padding
   useEffect(() => {
     const px =
-      height === "collapsed" ? "40px" : height === "half" ? "40vh" : "80vh";
+      height === "collapsed" ? "40px" : height === "half" ? "50vh" : "80vh";
     document.documentElement.style.setProperty("--terminal-height", px);
     return () => {
       document.documentElement.style.removeProperty("--terminal-height");

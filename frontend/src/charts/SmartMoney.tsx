@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { motion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 import { Link } from "react-router-dom";
 import { fetchSmartMoney } from "../api";
 import { formatUsd } from "../lib/format";
@@ -8,13 +8,16 @@ import { panelVariants } from "../lib/motion";
 import type { Timeframe } from "../types";
 
 const TOP_OPTIONS = [10, 25, 50] as const;
+const COLLAPSED_COUNT = 3;
+const EXPANDED_COUNT = 10;
 
 interface Props {
   timeframe?: Timeframe;
 }
 
 export default function SmartMoney({ timeframe }: Props) {
-  const [top, setTop] = useState<number>(10);
+  const [top, setTop] = useState<number>(25);
+  const [expanded, setExpanded] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ["smart-money", timeframe, top],
@@ -68,13 +71,14 @@ export default function SmartMoney({ timeframe }: Props) {
         </div>
       ) : (
         <div className="space-y-2">
-          {markets.map((m, i) => {
+          {markets.slice(0, expanded ? EXPANDED_COUNT : COLLAPSED_COUNT).map((m, i) => {
             const longExp = parseFloat(m.long_exposure) || 0;
             const shortExp = parseFloat(m.short_exposure) || 0;
             const total = longExp + shortExp;
             const longPct = total > 0 ? (longExp / total) * 100 : 50;
             const shortPct = total > 0 ? (shortExp / total) * 100 : 50;
-            const sentiment = longExp > shortExp ? "Bullish" : shortExp > longExp ? "Bearish" : "Split";
+            const favored = longExp > shortExp ? m.outcome : shortExp > longExp ? m.counter_outcome : "Split";
+            const favoredSide = longExp > shortExp ? "long" : shortExp > longExp ? "short" : "split";
 
             return (
               <motion.div
@@ -119,13 +123,13 @@ export default function SmartMoney({ timeframe }: Props) {
                     </div>
                   </div>
 
-                  {/* Labels */}
+                  {/* Labels: outcome names instead of L/S */}
                   <div className="flex items-center justify-between mt-1 text-[10px]">
                     <span className="text-green-400/70">
-                      {m.long_count}L {formatUsd(m.long_exposure)}
+                      {m.long_count} {m.outcome} {formatUsd(m.long_exposure)}
                     </span>
                     <span className="text-red-400/70">
-                      {m.short_count}S {formatUsd(m.short_exposure)}
+                      {m.short_count} {m.counter_outcome} {formatUsd(m.short_exposure)}
                     </span>
                   </div>
                 </div>
@@ -133,15 +137,16 @@ export default function SmartMoney({ timeframe }: Props) {
                 {/* Right side: sentiment + trader count */}
                 <div className="flex flex-col items-end gap-1 shrink-0">
                   <span
-                    className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
-                      sentiment === "Bullish"
+                    className={`text-[10px] font-semibold px-1.5 py-0.5 rounded max-w-[80px] truncate ${
+                      favoredSide === "long"
                         ? "text-green-400 bg-green-400/10"
-                        : sentiment === "Bearish"
+                        : favoredSide === "short"
                           ? "text-red-400 bg-red-400/10"
                           : "text-[var(--text-secondary)] bg-white/5"
                     }`}
+                    title={favored}
                   >
-                    {sentiment}
+                    {favored}
                   </span>
                   <span className="text-[10px] text-[var(--text-secondary)] font-mono">
                     {m.smart_trader_count}/{top}
@@ -150,6 +155,15 @@ export default function SmartMoney({ timeframe }: Props) {
               </motion.div>
             );
           })}
+
+          {markets.length > COLLAPSED_COUNT && (
+            <button
+              onClick={() => setExpanded(!expanded)}
+              className="w-full mt-1 py-1.5 text-[11px] font-medium text-[var(--accent-blue)] hover:text-[var(--accent-blue)]/80 transition-colors"
+            >
+              {expanded ? "Show less" : `Show ${Math.min(markets.length, EXPANDED_COUNT) - COLLAPSED_COUNT} more`}
+            </button>
+          )}
         </div>
       )}
     </motion.div>

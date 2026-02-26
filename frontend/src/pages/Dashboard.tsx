@@ -33,7 +33,7 @@ export default function Dashboard() {
   const [sort, setSort] = useState<SortColumn>("realized_pnl");
   const [order, setOrder] = useState<SortOrder>("desc");
   const [offset, setOffset] = useState(0);
-  const [timeframe, setTimeframe] = useState<Timeframe>("all");
+  const [timeframe, setTimeframe] = useState<Timeframe>("24h");
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["leaderboard", sort, order, offset, timeframe],
