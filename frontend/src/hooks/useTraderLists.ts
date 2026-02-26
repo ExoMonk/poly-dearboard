@@ -11,10 +11,14 @@ import {
 
 const LISTS_KEY = ["trader-lists"] as const;
 
+const JWT_KEY = "pd_jwt";
+
 export function useTraderLists() {
+  const hasJwt = !!localStorage.getItem(JWT_KEY);
   return useQuery({
     queryKey: LISTS_KEY,
     queryFn: fetchTraderLists,
+    enabled: hasJwt,
     staleTime: 30_000,
   });
 }

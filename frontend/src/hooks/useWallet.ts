@@ -17,10 +17,14 @@ const BALANCE_KEY = (id: string) => ["wallet-balance", id] as const;
 const DEPOSIT_ADDR_KEY = (id: string) => ["deposit-address", id] as const;
 const DEPOSIT_STATUS_KEY = (id: string) => ["deposit-status", id] as const;
 
+const JWT_KEY = "pd_jwt";
+
 export function useWallets() {
+  const hasJwt = !!localStorage.getItem(JWT_KEY);
   return useQuery({
     queryKey: WALLETS_KEY,
     queryFn: fetchWallets,
+    enabled: hasJwt,
     staleTime: 30_000,
   });
 }

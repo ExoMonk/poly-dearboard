@@ -15,9 +15,11 @@ interface CopyTradeWsOptions {
 // -- Query hooks --
 
 export function useSessions() {
+  const hasJwt = !!localStorage.getItem(JWT_KEY);
   return useQuery<CopyTradeSession[]>({
     queryKey: ["copytrade", "sessions"],
     queryFn: api.listSessions,
+    enabled: hasJwt,
     refetchInterval: 10_000,
   });
 }
@@ -59,17 +61,21 @@ export function useSessionPositions(sessionId: string | null) {
 }
 
 export function useCopyTradeSummary() {
+  const hasJwt = !!localStorage.getItem(JWT_KEY);
   return useQuery<CopyTradeSummary>({
     queryKey: ["copytrade", "summary"],
     queryFn: api.getCopyTradeSummary,
+    enabled: hasJwt,
     refetchInterval: 15_000,
   });
 }
 
 export function useActiveTraders() {
+  const hasJwt = !!localStorage.getItem(JWT_KEY);
   return useQuery<string[]>({
     queryKey: ["copytrade", "active-traders"],
     queryFn: api.getActiveTraders,
+    enabled: hasJwt,
     refetchInterval: 30_000,
   });
 }
