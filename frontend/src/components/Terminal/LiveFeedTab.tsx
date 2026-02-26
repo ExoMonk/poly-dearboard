@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { FeedTrade, SignalTrade, ConvergenceAlert, LiveFeedMode } from "../../types";
 import { formatUsd, shortenAddress, timeAgo } from "../../lib/format";
@@ -32,9 +32,12 @@ export function LiveFeedTab({ mode, onSetMode, listId, onSetListId, connected, i
   const seenRef = useRef<Set<string>>(new Set());
   const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
 
-  const trades: (SignalTrade | FeedTrade)[] = mode === "signals"
-    ? (signalTrades ?? []).slice(0, MAX_DISPLAY)
-    : (publicTrades ?? []).slice(0, MAX_DISPLAY);
+  const trades = useMemo<(SignalTrade | FeedTrade)[]>(
+    () => mode === "signals"
+      ? (signalTrades ?? []).slice(0, MAX_DISPLAY)
+      : (publicTrades ?? []).slice(0, MAX_DISPLAY),
+    [mode, signalTrades, publicTrades],
+  );
 
   useEffect(() => {
     const newIds: string[] = [];
