@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSessions, useUpdateSession } from "../../hooks/useCopyTrade";
+import { useRecentTraders } from "../../hooks/useRecentTraders";
 import { useTerminalDispatch, useTerminalState } from "./TerminalProvider";
 import { requestOpenCreateSession } from "./CreateSessionModal";
 import type { PaletteCommand } from "../../types";
@@ -20,6 +21,7 @@ export function useCommandRegistry() {
   const updateSession = useUpdateSession();
   const { logs } = useTerminalState();
   const { toggle, setHeight, setActiveTab, clearLogs, detachTab, attachTab } = useTerminalDispatch();
+  const { recentTraders } = useRecentTraders();
 
   const staticCommands = useMemo<PaletteCommand[]>(() => [
     {
@@ -268,8 +270,18 @@ export function useCommandRegistry() {
     return [...traderCommands, ...marketCommands];
   }, [logs, navigate]);
 
+  const recentCommands = useMemo<PaletteCommand[]>(() => {
+    return recentTraders.slice(0, 5).map((entry) => ({
+      id: `recent-trader-${entry.address}`,
+      label: `Recent: ${shortAddress(entry.address)}`,
+      section: "Quick Actions",
+      keywords: ["recent", "trader", entry.address],
+      action: () => navigate(`/trader/${entry.address}`),
+    }));
+  }, [recentTraders, navigate]);
+
   return useMemo(
-    () => [...staticCommands, ...sessionCommands, ...logJumpCommands],
-    [staticCommands, sessionCommands, logJumpCommands],
+    () => [...staticCommands, ...sessionCommands, ...logJumpCommands, ...recentCommands],
+    [staticCommands, sessionCommands, logJumpCommands, recentCommands],
   );
 }

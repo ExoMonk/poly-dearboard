@@ -1,7 +1,13 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import type { PaletteCommand } from "../../types";
 import { useCommandRegistry } from "./useCommandRegistry";
 import { useTerminalDispatch } from "./TerminalProvider";
+
+function shortAddress(address: string): string {
+  if (address.length <= 12) return address;
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
 
 const HELP_COMMANDS = [
   "wallet",
@@ -51,6 +57,28 @@ export function TerminalCommandPrompt() {
     const query = normalize(input);
     if (!query) return commands.slice(0, 5);
 
+    // Dynamic address jump suggestion
+    const trimmed = input.trim();
+    if (/^0x[a-fA-F0-9]{6,}$/i.test(trimmed)) {
+      const addrSuggestion: PaletteCommand = {
+        id: `dynamic-trader-${trimmed}`,
+        label: `Jump to trader ${shortAddress(trimmed)}`,
+        section: "Quick Actions",
+        keywords: [],
+        action: () => {
+          navigate(`/trader/${trimmed}`);
+          addLog("success", `Opened trader ${trimmed}`, undefined, "copytrade");
+        },
+      };
+      return [addrSuggestion, ...commands
+        .filter((cmd) => {
+          const labelMatch = cmd.label.toLowerCase().includes(query);
+          const keywordMatch = (cmd.keywords ?? []).some((keyword) => keyword.toLowerCase().includes(query));
+          return labelMatch || keywordMatch;
+        })
+        .slice(0, 4)];
+    }
+
     return commands
       .filter((cmd) => {
         const labelMatch = cmd.label.toLowerCase().includes(query);
@@ -58,7 +86,7 @@ export function TerminalCommandPrompt() {
         return labelMatch || keywordMatch;
       })
       .slice(0, 5);
-  }, [commands, input]);
+  }, [commands, input, navigate, addLog]);
 
   function addToHistory(value: string) {
     setHistory((prev) => {
@@ -132,6 +160,15 @@ export function TerminalCommandPrompt() {
   function runCommand(raw: string) {
     const query = normalize(raw);
     if (!query) return;
+
+    // Bare hex address → navigate to trader
+    if (isLikelyAddress(raw)) {
+      navigate(`/trader/${raw.trim()}`);
+      addToHistory(raw.trim());
+      addLog("success", `Opened trader ${raw.trim()}`, undefined, "copytrade");
+      setInput("");
+      return;
+    }
 
     const traderMatch = raw.trim().match(/^trader\s+(.+)$/i);
     if (traderMatch) {

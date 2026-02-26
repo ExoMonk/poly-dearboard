@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { motion } from "motion/react";
@@ -7,11 +7,15 @@ import type { OpenPosition, PnlTimeframe } from "../types";
 import Spinner from "../components/Spinner";
 import Pagination from "../components/Pagination";
 import LabelBadge from "../components/LabelBadge";
+import ReadinessBadge from "../components/ReadinessBadge";
+import CategoryChip from "../components/CategoryChip";
 import PnlChart from "../charts/PnlChart";
 import AddToListButton from "../components/AddToListButton";
 import { formatUsd, formatNumber, formatDate, formatTimestamp, shortenAddress, polygonscanAddress, polygonscanTx, polymarketAddress, formatHoldTime } from "../lib/format";
 import { labelTooltip } from "../lib/labels";
+import { reasonDisplay, BUCKET_CONFIG } from "../lib/readiness";
 import { staggerContainer, statCardVariants, tapScale } from "../lib/motion";
+import { useRecentTraders } from "../hooks/useRecentTraders";
 
 const PAGE_SIZE = 50;
 const POS_PAGE_SIZE = 10;
@@ -26,6 +30,11 @@ export default function TraderDetail() {
   const [pnlTimeframe, setPnlTimeframe] = useState<PnlTimeframe>("all");
   const [catExpanded, setCatExpanded] = useState(false);
   const [redemExpanded, setRedemExpanded] = useState(false);
+  const { recordVisit } = useRecentTraders();
+
+  useEffect(() => {
+    if (address) recordVisit(address);
+  }, [address, recordVisit]);
 
   const { data: trader, isLoading: loadingTrader, error: traderError } = useQuery({
     queryKey: ["trader", address],
@@ -171,6 +180,61 @@ export default function TraderDetail() {
           <StatCard label="Settled" value={`${profile.label_details.settled_count} / ${profile.total_positions}`} />
           <StatCard label="Active Span" value={formatHoldTime(profile.label_details.active_span_days * 24)} />
         </motion.div>
+      )}
+
+      {/* Copytrade Readiness Card */}
+      {profile?.readiness && (
+        <div>
+          <h2 className="text-lg font-bold gradient-text mb-4">Copytrade Readiness</h2>
+          <div className="glass p-5 space-y-4">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3">
+                <span className={`text-3xl font-black font-mono ${BUCKET_CONFIG[profile.readiness.bucket].color}`}>
+                  {profile.readiness.score}
+                </span>
+                <ReadinessBadge readiness={profile.readiness} size="md" />
+              </div>
+              <span className={`text-xs px-2 py-0.5 rounded-full border ${BUCKET_CONFIG[profile.readiness.confidence].bg} ${BUCKET_CONFIG[profile.readiness.confidence].border}`}>
+                {BUCKET_CONFIG[profile.readiness.confidence].text} confidence
+              </span>
+            </div>
+
+            {profile.readiness.categories.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {profile.readiness.categories.map((cat) => (
+                  <CategoryChip key={cat} category={cat} size="md" />
+                ))}
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              {profile.readiness.reason_codes.slice(0, 4).map((code, i) => {
+                const r = reasonDisplay(code, profile.readiness!.reasons[i]);
+                return (
+                  <div key={code} className="flex items-start gap-2 text-xs">
+                    <span className={`mt-0.5 ${code.endsWith("_penalty") ? "text-[var(--accent-orange)]" : "text-[var(--neon-green)]"}`}>
+                      {code.endsWith("_penalty") ? "▸" : "✓"}
+                    </span>
+                    <div>
+                      <span className="font-medium text-[var(--text-primary)]">{r.short}</span>
+                      <span className="text-[var(--text-secondary)] ml-1">— {r.detail}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {profile.readiness.categories.includes("volume_maker") && (
+              <div className="text-xs text-[var(--accent-orange)] bg-[var(--accent-orange)]/5 border border-[var(--accent-orange)]/20 rounded-lg px-3 py-2">
+                This trader's volume is concentrated in near-resolved markets. Copy-trade edge may be limited.
+              </div>
+            )}
+
+            <div className="text-[10px] text-[var(--text-secondary)]">
+              Assistive ranking — not a guarantee of profitability. v{profile.readiness.score_version}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Category Breakdown */}

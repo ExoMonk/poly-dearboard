@@ -18,6 +18,7 @@ export interface LeaderboardResponse {
   offset: number;
   labels: Record<string, BehavioralLabel[]>;
   label_details: Record<string, LabelDetails>;
+  readiness: Record<string, TraderReadiness>;
 }
 
 export interface TradeRecord {
@@ -203,6 +204,40 @@ export interface TraderProfile {
   resolved_positions: number;
   labels: BehavioralLabel[];
   label_details: LabelDetails;
+  readiness?: TraderReadiness;
+}
+
+// Copytrade Readiness (spec 28)
+
+export type DiscoveryCategory =
+  | "momentum"
+  | "consistent"
+  | "high_conviction"
+  | "fast_mover"
+  | "contrarian"
+  | "volume_maker";
+
+export type ReadinessBucket = "low" | "medium" | "high";
+
+export interface ReadinessMetrics {
+  settled_count: number;
+  unique_markets: number;
+  active_span_days: number;
+  near_resolved_volume_ratio?: number;
+  avg_hold_hours?: number;
+}
+
+export interface TraderReadiness {
+  score: number;
+  bucket: ReadinessBucket;
+  score_version: string;
+  computed_at: string;
+  timeframe: string;
+  categories: DiscoveryCategory[];
+  reason_codes: string[];
+  reasons: string[];
+  confidence: ReadinessBucket;
+  metrics: ReadinessMetrics;
 }
 
 // Alerts (WebSocket)
