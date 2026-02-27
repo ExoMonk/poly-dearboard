@@ -9,6 +9,9 @@ export interface TraderSummary {
   total_fees: string;
   first_trade: string;
   last_trade: string;
+  labels: BehavioralLabel[];
+  label_details?: LabelDetails;
+  readiness?: TraderReadiness;
 }
 
 export interface LeaderboardResponse {
@@ -16,9 +19,6 @@ export interface LeaderboardResponse {
   total: number;
   limit: number;
   offset: number;
-  labels: Record<string, BehavioralLabel[]>;
-  label_details: Record<string, LabelDetails>;
-  readiness: Record<string, TraderReadiness>;
 }
 
 export interface TradeRecord {

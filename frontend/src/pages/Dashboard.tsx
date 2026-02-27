@@ -58,8 +58,7 @@ export default function Dashboard() {
     if (!data) return [];
     if (categoryFilters.size === 0) return data.traders.slice(0, PAGE_SIZE);
     return data.traders.filter((t) => {
-      const r = data.readiness?.[t.address.toLowerCase()];
-      return r?.categories.some((c) => categoryFilters.has(c));
+      return t.readiness?.categories.some((c) => categoryFilters.has(c));
     }).slice(0, PAGE_SIZE);
   }, [data, categoryFilters]);
 
@@ -239,7 +238,7 @@ export default function Dashboard() {
                 const rank = offset + i + 1;
                 const pnl = parseFloat(t.realized_pnl);
                 const addrKey = t.address.toLowerCase();
-                const readiness = data.readiness?.[addrKey];
+                const readiness = t.readiness;
                 return (
                   <motion.tr
                     key={t.address}

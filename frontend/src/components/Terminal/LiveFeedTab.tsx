@@ -1,10 +1,9 @@
 import { useState, useRef, useEffect, useMemo } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import type { FeedTrade, SignalTrade, ConvergenceAlert, LiveFeedMode } from "../../types";
 import { formatUsd, shortenAddress, timeAgo } from "../../lib/format";
 import EventActions, { type ActionDef } from "../EventActions";
 import AddToListButton from "../AddToListButton";
-import { requestOpenCreateSession } from "./CreateSessionModal";
 import { useTraderLists } from "../../hooks/useTraderLists";
 
 const MAX_DISPLAY = 100;
@@ -24,7 +23,6 @@ interface Props {
 }
 
 export function LiveFeedTab({ mode, onSetMode, listId, onSetListId, connected, isLagging, signalTrades, convergenceAlerts, publicTrades }: Props) {
-  const navigate = useNavigate();
   const listRef = useRef<HTMLDivElement>(null);
   const { data: lists } = useTraderLists();
 
@@ -127,8 +125,6 @@ export function LiveFeedTab({ mode, onSetMode, listId, onSetListId, connected, i
           const showAddTrader = !(mode === "signals" && listId);
           const actions: ActionDef[] = [
             ...(showAddTrader ? [{ kind: "add_trader" as const, onClick: () => {}, render: <AddToListButton address={trade.trader} /> }] : []),
-            { kind: "copy_trade" as const, onClick: () => requestOpenCreateSession({ sourceSurface: "feed", defaults: { simulationMode: "simulate" }, question: trade.question }) },
-            { kind: "open_trader" as const, onClick: () => navigate(`/trader/${trade.trader}`) },
           ];
           return (
             <div
